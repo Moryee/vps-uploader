@@ -8,7 +8,7 @@ services:
         env_file:
             - ./.env.dev
         volumes:
-            - ./logs/:/usr/src/web/logs/
+            - ./web/logs/:/usr/src/web/logs/
             - ./web:/usr/src/web/
         networks:
             - backend_network
@@ -24,7 +24,6 @@ services:
         env_file:
             - ./.env.dev.sub
         volumes:
-            - ./logs/:/usr/src/web/logs-sub/
             - ./web:/usr/src/web-sub/
         networks:
             - backend_network

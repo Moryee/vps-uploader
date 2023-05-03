@@ -75,6 +75,7 @@ async def get_location_from_ip(ip_address):
             data = await response.json()
             return (data['latitude'], data['longitude'])
         else:
+            current_app.logger.error(f'Couldn\'t get location from ip \'{ip_address}\'')
             return None
 
 
@@ -122,7 +123,11 @@ async def api_upload_url_client():
     async with ClientSession() as session:
         response = await session.post(f'{closest_host_url}{api_upload_url_publisher_endpoint}', json={'url': url, 'hosts_urls': hosts_urls})
 
-        return await response.json()
+        if response.ok:
+            return await response.json()
+        else:
+            current_app.logger.error(f'Couldn\'t transfer url to closest host \'{closest_host_url}\'. Response: {response}')
+            return make_response({'error': f'Couldn\'t transfer url to closest host \'{closest_host_url}\''}, 500)
 
 
 @bp.route(api_upload_url_test_endpoint, methods=['POST'])
@@ -145,7 +150,8 @@ async def api_upload_url_test():
         if geo_distributed_resp.ok:
             response['geo_distributed'] = await geo_distributed_resp.json()
         else:
-            response['geo_distributed'] = {'error': 'Something went wrong'}
+            current_app.logger.error(f'Something went wrong while uploading url to \'{this_host_url}\'. Response: {geo_distributed_resp}')
+            response['geo_distributed'] = {'error': f'Something went wrong while uploading url to \'{this_host_url}{api_upload_url_client_endpoint}\'.'}
 
         # ordinary
 
@@ -153,7 +159,8 @@ async def api_upload_url_test():
         if ordinary_resp.ok:
             response['ordinary'] = await ordinary_resp.json()
         else:
-            response['ordinary'] = {'error': 'Something went wrong'}
+            current_app.logger.error(f'Something went wrong while uploading url to \'{this_host_url}\'. Response: {ordinary_resp}')
+            response['ordinary'] = {'error': f'Something went wrong while uploading url to \'{this_host_url}{api_upload_url_endpoint}\''}
 
     return response
 
@@ -230,8 +237,9 @@ async def api_upload_url():
                     'execution_time': round(time.monotonic() - x1, 2),
                 }
             else:
+                current_app.logger.error(f'Couldn\'t upload file by url \'{url}\'. Response: {resp}')
                 return {
-                    'error': f'Couldn\'t upload file by url. {resp.status}',
+                    'error': f'Couldn\'t upload file by url \'{url}\'. Response: {resp}',
                 }
 
 
