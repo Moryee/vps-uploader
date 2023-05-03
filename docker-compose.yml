@@ -1,0 +1,49 @@
+services:
+    web:
+        restart: always
+        build: ./web
+        command: flask run --host 0.0.0.0
+        ports:
+            - 5000:5000
+        env_file:
+            - ./.env.dev
+        volumes:
+            - ./logs/:/usr/src/web/logs/
+            - ./web:/usr/src/web/
+        networks:
+            - backend_network
+        depends_on:
+            db:
+                condition: service_healthy
+    web-sub:
+        restart: always
+        build:
+            context: ./web
+            dockerfile: Dockerfile.sub
+        command: flask run --host 0.0.0.0
+        env_file:
+            - ./.env.dev.sub
+        volumes:
+            - ./logs/:/usr/src/web/logs-sub/
+            - ./web:/usr/src/web-sub/
+        networks:
+            - backend_network
+    db:
+        image: postgres:14.5
+        env_file:
+            - ./.env.dev.db
+        volumes:
+            - db_data:/var/lib/postgresql/data/
+        networks:
+            - backend_network
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            interval: 3s
+            timeout: 5s
+            retries: 5
+
+volumes:
+    db_data:
+
+networks:
+    backend_network:

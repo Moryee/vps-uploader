@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Index{% endblock %}
+{% block head %}
+  {{ super() }}
+{% endblock %}
+{% block content %}
+    <div class="col">
+      <h3>Test</h3>
+      <div id="upload-url-container">
+        <form method="post" enctype="multipart/form-data">
+          <input class="form-control mb-3" name="url" required>
+          <input class="btn btn-primary" type="submit" value="Send link">
+        </form>
+      </div>
+      <div id="result-upload-url" class="result mt-2"></div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    // Endpoints
+
+    let upload_url = "{{ url_for('main.api_upload_url_test') }}";
+
+    // Elements
+
+    let upload_url_container = document.getElementById("upload-url-container");
+    let form_upload_url = upload_url_container.querySelector("form");
+
+
+    // Functions
+
+    function upload_url_submit(e) {
+      e.preventDefault();
+      let url = form_upload_url.url.value;
+      fetch(upload_url, {
+        method: "POST",
+        body: JSON.stringify({url: url}),
+        headers: {
+            'Content-Type': 'application/json'
+        }
+      })
+      .then(response => response.json())
+      .then(data => {
+        let result = document.getElementById("result-upload-url");
+        result.innerHTML = JSON.stringify(data, null, 2);
+      });
+    }
+
+    // Event listeners
+
+    form_upload_url.addEventListener("submit", upload_url_submit);
+
+  </script>
+{% endblock %}
