@@ -6,56 +6,55 @@ from logging.config import dictConfig
 import os
 
 
-logger_config = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'default': {
-            'format': '{levelname} {asctime} | {pathname}.{funcName}(), Ln {lineno}: {message}',
-            'style': '{',
-        },
-    },
-    'handlers': {
-        'default': {
-            'level': 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/info.log',
-            'formatter': 'default',
-            'backupCount': 10,
-            'maxBytes': 1024 * 1024 * 5,
-            'delay': True,
-        },
-        'debug': {
-            'level': 'DEBUG',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': 'logs/debug.log',
-            'formatter': 'default',
-            'backupCount': 10,
-            'maxBytes': 1024 * 1024 * 5,
-            'delay': True,
-        },
-    },
-    'loggers': {
-        '': {
-            'handlers': ['default'],
-            'level': 'INFO',
-            'propagate': True
-        },
-        'debug': {
-            'handlers': ['debug'],
-            'level': 'DEBUG',
-            'propagate': True
-        }
-    }
-}
-
-
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
 
-    if not os.path.exists('logs'):
-        os.mkdir('logs')
+    if not os.path.exists((app.config['LOGS_DIR'])):
+        os.mkdir((app.config['LOGS_DIR']))
+
+    logger_config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'default': {
+                'format': '{levelname} {asctime} | {pathname}.{funcName}(), Ln {lineno}: {message}',
+                'style': '{',
+            },
+        },
+        'handlers': {
+            'default': {
+                'level': 'INFO',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': os.path.join(app.config['LOGS_DIR'], 'info.log'),
+                'formatter': 'default',
+                'backupCount': 10,
+                'maxBytes': 1024 * 1024 * 5,
+                'delay': True,
+            },
+            'debug': {
+                'level': 'DEBUG',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': os.path.join(app.config['LOGS_DIR'], 'debug.log'),
+                'formatter': 'default',
+                'backupCount': 10,
+                'maxBytes': 1024 * 1024 * 5,
+                'delay': True,
+            },
+        },
+        'loggers': {
+            '': {
+                'handlers': ['default'],
+                'level': 'INFO',
+                'propagate': True
+            },
+            'debug': {
+                'handlers': ['debug'],
+                'level': 'DEBUG',
+                'propagate': True
+            }
+        }
+    }
 
     if app.config['DEBUG']:
         if app.config['MAIN_HOST']:

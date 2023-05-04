@@ -1,9 +1,10 @@
 import os
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-
 
 class Config:
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+    LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+
     SECRET_KEY = os.environ.get('SECRET_KEY')
     DEBUG = bool(os.environ.get('FLASK_DEBUG', default=0))
     HOST_NAME = os.environ.get('HOST_NAME')
