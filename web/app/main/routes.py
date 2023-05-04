@@ -245,12 +245,13 @@ async def api_upload_url():
     '''
 
     url = request.json.get('url')
+    file_name = url.split('/')[-1]
 
     async with ClientSession() as session:
         x1 = time.monotonic()
         async with session.get(url) as resp:
             if resp.ok:
-                await upload_file_by_chunks(resp)
+                await upload_file_by_chunks(resp, file_name)
                 return {
                     'host_name': current_app.config['HOST_NAME'],
                     'execution_time': round(time.monotonic() - x1, 2),
