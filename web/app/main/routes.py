@@ -233,7 +233,11 @@ async def api_upload_url_publisher():
     }
 
     for host_response in hosts_responses:
-        response['hosts_responses'].append(await host_response.json())
+        if host_response.ok:
+            response['hosts_responses'].append(await host_response.json())
+        else:
+            current_app.logger.error(f'Couldn\'t upload file to host \'{host}\'. Response: {host_response}')
+            response['hosts_responses'].append({'error': f'Couldn\'t upload file to host \'{host}\''})
 
     return response
 
