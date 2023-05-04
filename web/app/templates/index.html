@@ -28,12 +28,14 @@
 
     let upload_url_container = document.getElementById("upload-url-container");
     let form_upload_url = upload_url_container.querySelector("form");
+    let result_upload_url = document.getElementById("result-upload-url");
 
 
     // Functions
 
     function upload_url_submit(e) {
       e.preventDefault();
+      result_upload_url.innerHTML = "Loading...";
       let url = form_upload_url.url.value;
       fetch(upload_url, {
         method: "POST",
@@ -44,8 +46,7 @@
       })
       .then(response => response.json())
       .then(data => {
-        let result = document.getElementById("result-upload-url");
-        result.innerHTML = JSON.stringify(data, null, 2);
+        result_upload_url.innerHTML = JSON.stringify(data, null, 2);
       });
     }
 

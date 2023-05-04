@@ -13,10 +13,8 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     if MAIN_HOST:
         MAIN_HOST_URL = os.environ.get('MAIN_HOST_URL')
-        HOSTS_URLS = os.environ.get('HOSTS_URLS').split(',')
-
-        if not DEBUG:
-            IP2LOCATION_API_KEY = os.environ.get('IP2LOCATION_API_KEY')
+        HOSTS_URLS = os.environ.get('HOSTS_URLS').split(',') if os.environ.get('HOSTS_URLS') else []
+        IP2LOCATION_API_KEY = os.environ.get('IP2LOCATION_API_KEY')
 
         # Database
 

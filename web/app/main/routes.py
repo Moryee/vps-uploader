@@ -35,8 +35,8 @@ async def upload_file(file, file_name):
         os.unlink(temp.name)
 
 
-async def upload_file_by_stream(stream: ClientResponse):
-    with tempfile.SpooledTemporaryFile() as temp:
+async def upload_file_by_chunks(stream: ClientResponse, file_name):
+    with tempfile.NamedTemporaryFile(delete=False) as temp:
         while True:
             chunk = await stream.content.read(CHUNK_SIZE)
             if not chunk:
@@ -46,11 +46,18 @@ async def upload_file_by_stream(stream: ClientResponse):
 
         # here can be saving file
 
+        temp.close()
+        os.unlink(temp.name)
+
 
 async def get_closest_server(location):
     closest_server_distance = float('inf')
     closest_server_host = None
-    for host_url in current_app.config['HOSTS_URLS']:
+
+    hosts_urls = current_app.config['HOSTS_URLS'][:]
+    hosts_urls.append(current_app.config['MAIN_HOST_URL'])
+
+    for host_url in hosts_urls:
         server_location = await get_location_from_url(host_url)
 
         if server_location:
@@ -86,7 +93,11 @@ def get_location_from_url(url):
 
 def get_ip_from_url(url):
     ext = extract(url)
-    return socket.gethostbyname(ext.subdomain + '.' + ext.domain + '.' + ext.suffix)
+
+    try:
+        return socket.gethostbyname(ext.subdomain + '.' + ext.domain + '.' + ext.suffix)
+    except Exception:
+        return ext.domain
 
 
 # Routes
@@ -118,7 +129,10 @@ async def api_upload_url_client():
     else:
         closest_host_url = await get_closest_server(await get_location_from_url(url))
 
-    hosts_urls.remove(closest_host_url)
+    try:
+        hosts_urls.remove(closest_host_url)
+    except ValueError:
+        pass
 
     async with ClientSession() as session:
         response = await session.post(f'{closest_host_url}{api_upload_url_publisher_endpoint}', json={'url': url, 'hosts_urls': hosts_urls})
@@ -186,6 +200,10 @@ async def api_upload_url_publisher():
 
         x1 = time.monotonic()
         async with session.get(url) as resp:
+
+            if not resp.ok:
+                return make_response({'error': f'Couldn\'t download file from url \'{url}\''}, 400)
+
             with tempfile.NamedTemporaryFile(delete=False) as temp:
                 while True:
                     chunk = await resp.content.read(CHUNK_SIZE)
@@ -227,11 +245,12 @@ async def api_upload_url():
     '''
 
     url = request.json.get('url')
+
     async with ClientSession() as session:
+        x1 = time.monotonic()
         async with session.get(url) as resp:
             if resp.ok:
-                x1 = time.monotonic()
-                await upload_file_by_stream(resp)
+                await upload_file_by_chunks(resp)
                 return {
                     'host_name': current_app.config['HOST_NAME'],
                     'execution_time': round(time.monotonic() - x1, 2),
