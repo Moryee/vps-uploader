@@ -214,15 +214,19 @@ async def api_upload_url_publisher():
 
                 x2 = time.monotonic()
 
-                with open(temp.name, 'rb') as file:
-                    for host in hosts_urls:
-                        data = FormData()
+                async def send_file(host, file_path, session):
+                    data = FormData()
+                    with open(file_path, 'rb') as file:
+                        data.add_field('file', file, filename=file_path, content_type='multipart/form-data')
+                        response = await session.post(f'{host}{api_upload_file_endpoint}', data=data)
+                    return response
 
-                        data.add_field('file', file, filename=temp.name, content_type='multipart/form-data')
+                for host in hosts_urls:
+                    task = asyncio.create_task(send_file(host, temp.name, session))
+                    tasks.append(task)
 
-                        task = asyncio.create_task(session.post(f'{host}{api_upload_file_endpoint}', data=data))
-                        tasks.append(task)
-                    hosts_responses = await asyncio.gather(*tasks)
+                hosts_responses = await asyncio.gather(*tasks)
+
                 temp.close()
                 os.unlink(temp.name)
 
