@@ -86,9 +86,9 @@ async def get_location_from_ip(ip_address):
             return None
 
 
-def get_location_from_url(url):
+async def get_location_from_url(url):
     ip_address = get_ip_from_url(url)
-    return get_location_from_ip(ip_address)
+    return await get_location_from_ip(ip_address)
 
 
 def get_ip_from_url(url):

@@ -1,14 +1,25 @@
 import os
 
 
+def convert_to_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif value.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise ValueError(f'Cannot convert {value} to bool')
+
+
 class Config:
     BASE_DIR = os.path.abspath(os.path.dirname(__file__))
     LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 
     SECRET_KEY = os.environ.get('SECRET_KEY')
-    DEBUG = bool(os.environ.get('FLASK_DEBUG', default=0))
+    DEBUG = convert_to_bool(os.environ.get('FLASK_DEBUG', default=0))
     HOST_NAME = os.environ.get('HOST_NAME')
-    MAIN_HOST = True if os.environ.get('MAIN_HOST', default=0) == 'True' else False
+    MAIN_HOST = convert_to_bool(os.environ.get('MAIN_HOST'))
 
     SQLALCHEMY_DATABASE_URI = None
     SQLALCHEMY_TRACK_MODIFICATIONS = False
