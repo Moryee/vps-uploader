@@ -90,7 +90,4 @@ celerybeat-schedule
 db.sqlite3
 
 uploads/
-
-config.ini
-inventory.yml
-playbook.yml
+ansible/

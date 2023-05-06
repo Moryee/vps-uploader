@@ -28,6 +28,7 @@
 
     let upload_url_container = document.getElementById("upload-url-container");
     let form_upload_url = upload_url_container.querySelector("form");
+    let form_submit_btn = form_upload_url.querySelector("input[type=submit]");
     let result_upload_url = document.getElementById("result-upload-url");
 
 
@@ -36,6 +37,7 @@
     function upload_url_submit(e) {
       e.preventDefault();
       result_upload_url.innerHTML = "Loading...";
+      form_submit_btn.disabled = true;
       let url = form_upload_url.url.value;
       fetch(upload_url, {
         method: "POST",
@@ -47,6 +49,12 @@
       .then(response => response.json())
       .then(data => {
         result_upload_url.innerHTML = JSON.stringify(data, null, 2);
+        form_submit_btn.disabled = false;
+      })
+      .catch(error => {
+        console.error(error);
+        result_upload_url.innerHTML = "Error";
+        form_submit_btn.disabled = false;
       });
     }
 

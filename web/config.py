@@ -21,12 +21,15 @@ class Config:
     HOST_NAME = os.environ.get('HOST_NAME')
     MAIN_HOST = convert_to_bool(os.environ.get('MAIN_HOST'))
 
+    TEBI_KEY = os.environ.get('TEBI_KEY')
+    TEBI_SECRET = os.environ.get('TEBI_SECRET')
+    TEBI_BUCKET = os.environ.get('TEBI_BUCKET')
+
     SQLALCHEMY_DATABASE_URI = None
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     if MAIN_HOST:
         MAIN_HOST_URL = os.environ.get('MAIN_HOST_URL')
         HOSTS_URLS = os.environ.get('HOSTS_URLS').split(',') if os.environ.get('HOSTS_URLS') else []
-        IP2LOCATION_API_KEY = os.environ.get('IP2LOCATION_API_KEY')
 
         # Database
 
