@@ -22,6 +22,15 @@ api_test_download_speed_endpoint = '/api/test-download-speed'
 # Helper functions
 
 
+def tebi_get_client():
+    return boto3.client(
+        service_name='s3',
+        aws_access_key_id=current_app.config['TEBI_KEY'],
+        aws_secret_access_key=current_app.config['TEBI_SECRET'],
+        endpoint_url='https://s3.tebi.io'
+    )
+
+
 def get_bucket():
     return boto3.resource(
         service_name='s3',
@@ -147,7 +156,33 @@ async def api_upload_url_test():
                 new_temp_file.close()
                 os.unlink(new_temp_file.name)
 
-    response['geo_distributed'] = await publish_tebi(file_name)
+    s3_client = tebi_get_client()
+
+    def is_all_replicated(replication_status):
+        return replication_status == 'DE:1,USE:1,USW:1'
+
+    replication_complete = False
+    tries = 0
+    while not replication_complete and tries < 10:
+        try:
+            resp = s3_client.head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
+            replication_status = resp.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-tb-replication', None)
+
+            if is_all_replicated(replication_status):
+                replication_complete = True
+        except Exception as e:
+            print(f"Error checking replication status: {e}")
+            break
+
+        if not replication_complete:
+            tries += 1
+            await asyncio.sleep(2)
+
+    if replication_complete:
+        response['geo_distributed'] = await publish_tebi(file_name)
+    else:
+        response['geo_distributed'] = {'error': f'Couldn\'t publish url \'{url}\'. Replication status: {replication_status}'}
+
     response['ordinary'] = await publish_url(url)
 
     return response
