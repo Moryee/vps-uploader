@@ -163,7 +163,7 @@ async def api_upload_url_test():
 
     replication_complete = False
     tries = 0
-    while not replication_complete and tries < 10:
+    while not replication_complete and tries < 20:
         try:
             resp = s3_client.head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
             replication_status = resp.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-tb-replication', None)
