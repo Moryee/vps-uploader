@@ -6,9 +6,11 @@ from aiohttp import ClientSession, ClientResponse
 import time
 import asyncio
 import boto3
+from app.models.test import Test
 
 
 CHUNK_SIZE = 1024 * 1024 * 1
+DOWNLOADING_SPEED = 100 * 1024 * 1024 / 8
 
 
 api_upload_url_test_endpoint = '/api/upload-url-test'
@@ -45,11 +47,28 @@ async def publish(endpoint, json):
     hosts_urls = current_app.config['HOSTS_URLS'][:]
     hosts_urls.append(this_host_url)
 
+    async def make_post(session, host, endpoint, json):
+        start_time = time.monotonic()
+
+        resp: ClientResponse
+        async with session.post(f'{host}{endpoint}', json=json) as resp:
+            end_time = time.monotonic()
+
+            json_mod = await resp.json()
+
+            ttfb_client = end_time - start_time
+            ttfb_server = float(resp.headers['x-ttfb'])
+
+            json_mod['ttfb'] = round(ttfb_client, 2)
+            json_mod['latency'] = round(ttfb_client - ttfb_server, 2)
+
+            return {'response': resp, 'json': json_mod}
+
     async with ClientSession() as session:
         tasks = []
 
         for host in hosts_urls:
-            task = asyncio.create_task(session.post(f'{host}{endpoint}', json=json))
+            task = asyncio.create_task(make_post(session, host, endpoint, json))
             tasks.append(task)
 
         hosts_responses = await asyncio.gather(*tasks)
@@ -57,8 +76,8 @@ async def publish(endpoint, json):
     responses = []
 
     for h_resp in hosts_responses:
-        if h_resp.ok:
-            responses.append(await h_resp.json())
+        if h_resp['response'].ok:
+            responses.append(h_resp['json'])
         else:
             current_app.logger.error(f'Couldn\'t publish to host \'{host + endpoint}\'. Response: {h_resp}')
             responses.append({'error': f'Couldn\'t publish to host \'{host}\''})
@@ -86,17 +105,34 @@ async def upload_file(file, file_name):
 
 async def upload_file_by_chunks(stream: ClientResponse, file_name):
     with tempfile.NamedTemporaryFile(delete=False) as temp:
+        start_time = time.monotonic()
         while True:
             chunk = await stream.content.read(CHUNK_SIZE)
             if not chunk:
                 break
             temp.write(chunk)
+            time_elapsed = time.monotonic() - start_time
+            expected_time = len(chunk) / DOWNLOADING_SPEED - time_elapsed
+            if expected_time > 0:
+                time.sleep(expected_time)
         temp.seek(0)
 
         # here can be saving file
 
         temp.close()
         os.unlink(temp.name)
+
+
+@bp.before_request
+def before_request():
+    request.start_time = time.time()
+
+
+@bp.after_request
+def after_request(response):
+    ttfb = time.time() - request.start_time
+    response.headers['X-TTFB'] = str(ttfb)
+    return response
 
 
 # Routes
@@ -108,6 +144,15 @@ async def index():
         return make_response('This is not main server', 400)
 
     return render_template('index.html')
+
+
+@bp.route('/tests')
+async def tests():
+    if not current_app.config['MAIN_HOST']:
+        return make_response('This is not main server', 400)
+
+    tests = Test.query.order_by(Test.datetime.desc()).all()
+    return render_template('tests.html', tests=tests)
 
 
 @bp.route(api_upload_url_test_endpoint, methods=['POST'])
@@ -125,14 +170,14 @@ async def api_upload_url_test():
     file_name = time.strftime('%Y-%m-%d_%H-%M-%S_') + url.split('/')[-1]
 
     response = {
-        'geo_distributed': None,
+        'tebi': None,
         'ordinary': None
     }
 
     async with ClientSession() as session:
         async with session.get(url) as resp:
             if not resp.ok:
-                response['geo_distributed'] = {'error': f'Couldn\'t publish url \'{url}\'. Response: {resp}'}
+                response['tebi'] = {'error': f'Couldn\'t publish url \'{url}\'. Response: {resp}'}
 
             downloaded_size = 0
             with tempfile.NamedTemporaryFile(delete=False) as temp:
@@ -179,9 +224,10 @@ async def api_upload_url_test():
             await asyncio.sleep(2)
 
     if replication_complete:
-        response['geo_distributed'] = await publish_tebi(file_name)
+        response['tebi'] = await publish_tebi(file_name)
+        get_bucket().delete_objects(Delete={'Objects': [{'Key': file_name}]})
     else:
-        response['geo_distributed'] = {'error': f'Couldn\'t publish url \'{url}\'. Replication status: {replication_status}'}
+        response['tebi'] = {'error': f'Couldn\'t publish url \'{url}\'. Replication status: {replication_status}'}
 
     response['ordinary'] = await publish_url(url)
 
@@ -198,7 +244,21 @@ async def api_upload_tebi():
 
     x1 = time.monotonic()
     with tempfile.NamedTemporaryFile(delete=False) as temp:
-        get_bucket().download_file(file_name, temp.name)
+        start_time = time.monotonic()
+        file_size = get_bucket().Object(file_name).content_length
+        bytes_read = 0
+        body = get_bucket().Object(file_name).get()['Body']
+
+        while True:
+            chunk = body.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            temp.write(chunk)
+            bytes_read += len(chunk)
+            time_elapsed = time.monotonic() - start_time
+            expected_time = (bytes_read / file_size) * file_size / DOWNLOADING_SPEED - time_elapsed
+            if expected_time > 0:
+                time.sleep(expected_time)
 
         temp.close()
         os.unlink(temp.name)

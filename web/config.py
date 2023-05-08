@@ -25,6 +25,9 @@ class Config:
     TEBI_SECRET = os.environ.get('TEBI_SECRET')
     TEBI_BUCKET = os.environ.get('TEBI_BUCKET')
 
+    SCHEDULER_API_ENABLED = True
+    SCHEDULER_TIMEZONE = 'Europe/Kiev'
+
     SQLALCHEMY_DATABASE_URI = None
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     if MAIN_HOST:
