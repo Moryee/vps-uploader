@@ -204,7 +204,7 @@ async def api_upload_url_test():
     s3_client = tebi_get_client()
 
     def is_all_replicated(replication_status):
-        return replication_status == 'DE:1,USE:1,USW:1'
+        return replication_status == 'DE:1,SGP:1,USE:1,USW:1'
 
     replication_complete = False
     tries = 0
