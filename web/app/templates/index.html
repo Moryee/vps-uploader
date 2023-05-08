@@ -12,9 +12,12 @@
           <input class="btn btn-primary" type="submit" value="Send link">
         </form>
       </div>
-      <div id="result-upload-url" class="result mt-2"></div>
+      <div id="result-execution-speed" class="result mt-2"></div>
+      <div id="result-upload-url" class="row result mt-2">
+        <pre id="result-tebi" class="col"></pre>
+        <pre id="result-ordinary" class="col"></pre>
+      </div>
     </div>
-  </div>
 {% endblock %}
 
 {% block scripts %}
@@ -29,16 +32,25 @@
     let upload_url_container = document.getElementById("upload-url-container");
     let form_upload_url = upload_url_container.querySelector("form");
     let form_submit_btn = form_upload_url.querySelector("input[type=submit]");
+    
+    let result_execution_speed = document.getElementById("result-execution-speed");
     let result_upload_url = document.getElementById("result-upload-url");
+    let result_ordinary = document.getElementById("result-ordinary");
+    let result_tebi = document.getElementById("result-tebi");
 
 
     // Functions
 
     function upload_url_submit(e) {
       e.preventDefault();
-      result_upload_url.innerHTML = "Loading...";
+      result_execution_speed.innerHTML = '';
+      result_ordinary.innerHTML = 'Loading...';
+      result_tebi.innerHTML = 'Loading...';
       form_submit_btn.disabled = true;
+
       let url = form_upload_url.url.value;
+      const startTime = performance.now();
+
       fetch(upload_url, {
         method: "POST",
         body: JSON.stringify({url: url}),
@@ -46,10 +58,21 @@
             'Content-Type': 'application/json'
         }
       })
-      .then(response => response.json())
+      .then(response => {
+        const endTime = performance.now();
+
+        const ttfb_client = (endTime - startTime) / 1000;
+        const ttfb_server = response.headers.get("X-TTFB");
+        const latency = ttfb_client - ttfb_server;
+
+        result_execution_speed.innerHTML = `Time to main host:<br>TTFB: ${ttfb_client.toFixed(2)} s <br>Latency: ${latency.toFixed(2)} s`;
+        
+        return response.json()
+      })
       .then(data => {
-        result_upload_url.innerHTML = JSON.stringify(data, null, 2);
         form_submit_btn.disabled = false;
+        result_tebi.innerHTML = 'Tebi:<br>' + JSON.stringify(data.tebi, null, 2);
+        result_ordinary.innerHTML = 'Ordinary:<br>' + JSON.stringify(data.ordinary, null, 2);
       })
       .catch(error => {
         console.error(error);

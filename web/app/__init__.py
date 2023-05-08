@@ -4,6 +4,7 @@ from flask_cors import CORS
 import logging
 from logging.config import dictConfig
 import os
+from .extensions import scheduler, db
 
 
 def create_app(config_class=Config):
@@ -68,6 +69,12 @@ def create_app(config_class=Config):
     cors = CORS(app, resources={r"/api/*": {"origins": "*"}})
 
     # Flask extensions
+    if app.config['MAIN_HOST']:
+        db.init_app(app)
+
+        scheduler.init_app(app)
+        from .main import tasks
+        scheduler.start()
 
     # Blueprints
 

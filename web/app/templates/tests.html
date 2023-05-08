@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Tests{% endblock %}
+{% block head %}
+  {{ super() }}
+  <style>
+    .folder {
+      cursor: pointer;
+      padding: 3px;
+      border-radius: 3px;
+    }
+    .folder:hover {
+      background-color: #e9ecef;
+    }
+    .icon {
+      margin-left: 10px;
+    }
+    .test .content {
+      margin-top: 5px;
+      margin-left: 10px;
+      padding-left: 10px;
+      background-color: #e9ecef;
+      border-radius: 3px;
+    }
+    .unselectable {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      -khtml-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      -o-user-select: none;
+      user-select: none;
+    }
+  </style>
+{% endblock %}
+{% block content %}
+    <div class="col">
+      <h3>Tests</h3>
+      <div id="tests">
+      {% for test in tests %}
+        <div class="test mb-1">
+          <div class="folder unselectable"><span>Id: {{ test.id }}, {{ test.datetime.strftime('%Y-%m-%d %H:%M:%S') }}</span><span class="icon">▷</span></div>
+          <div class="content" style="display: none">
+            <div>Url: {{ test.url }}</div>
+            <pre>{{ test.content }}</pre>
+          </div>
+        </div>
+      {% endfor %}
+      </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    // Elements
+    let tests_container = document.getElementById('tests');
+
+    // Functions
+    function beautifyJson(json) {
+      json = json.replaceAll('\'', '"');
+      return JSON.stringify(JSON.parse(json), null, 2);
+    }
+
+    tests_container.querySelectorAll('pre').forEach((pre) => {
+      pre.innerHTML = beautifyJson(pre.innerHTML);
+    });
+
+    function folderClick(event) {
+      let folder = undefined;
+      if (event.target.classList.contains('folder')) {
+        folder = event.target;
+      }
+      else if (event.target.parentElement.classList.contains('folder')) {
+        folder = event.target.parentElement;
+      }
+      else {
+        return;
+      }
+
+      let icon = folder.querySelector('.icon');
+      let tests = folder.parentElement.querySelector('.content');
+      if (tests.style.display == 'none') {
+        icon.innerHTML = '▼';
+        tests.style.display = 'block';
+      } else {
+        icon.innerHTML = '▷';
+        tests.style.display = 'none';
+      }
+    }
+
+    // Event listeners
+    tests_container.querySelectorAll('.test').forEach((test) => {
+      test.addEventListener('click', (event) => {
+        folderClick(event);
+      });
+    });
+
+  </script>
+{% endblock %}
