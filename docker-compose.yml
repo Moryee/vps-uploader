@@ -2,7 +2,8 @@ services:
     web:
         restart: always
         build: ./web
-        command: flask run --host 0.0.0.0
+        # command: flask run --host 0.0.0.0
+        command: gunicorn -k gevent -w 4 -b 0.0.0.0:5000 'app:create_app()'
         ports:
             - 5000:5000
         env_file:
@@ -40,6 +41,10 @@ services:
             interval: 3s
             timeout: 5s
             retries: 5
+    redis:
+        image: redis:alpine
+        networks:
+            - backend_network
 
 volumes:
     db_data:

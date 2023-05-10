@@ -2,6 +2,12 @@
 {% block title %}Index{% endblock %}
 {% block head %}
   {{ super() }}
+  <style>
+    .result {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+  </style>
 {% endblock %}
 {% block content %}
     <div class="col">
@@ -13,10 +19,7 @@
         </form>
       </div>
       <div id="result-execution-speed" class="result mt-2"></div>
-      <div id="result-upload-url" class="row result mt-2">
-        <pre id="result-tebi" class="col"></pre>
-        <pre id="result-ordinary" class="col"></pre>
-      </div>
+      <pre id="result-upload" class="result mt-2"></pre>
     </div>
 {% endblock %}
 
@@ -26,6 +29,7 @@
     // Endpoints
 
     let upload_url = "{{ url_for('main.api_upload_url_test') }}";
+    let listen_url = "{{ url_for('sse.stream') }}";
 
     // Elements
 
@@ -33,27 +37,25 @@
     let form_upload_url = upload_url_container.querySelector("form");
     let form_submit_btn = form_upload_url.querySelector("input[type=submit]");
     
+    let listen_uuid = uuidv4();
     let result_execution_speed = document.getElementById("result-execution-speed");
-    let result_upload_url = document.getElementById("result-upload-url");
-    let result_ordinary = document.getElementById("result-ordinary");
-    let result_tebi = document.getElementById("result-tebi");
-
+    let result_upload = document.getElementById("result-upload");
 
     // Functions
 
     function upload_url_submit(e) {
       e.preventDefault();
       result_execution_speed.innerHTML = '';
-      result_ordinary.innerHTML = 'Loading...';
-      result_tebi.innerHTML = 'Loading...';
       form_submit_btn.disabled = true;
 
       let url = form_upload_url.url.value;
       const startTime = performance.now();
 
+      source = listen_upload(result_upload);
+
       fetch(upload_url, {
         method: "POST",
-        body: JSON.stringify({url: url}),
+        body: JSON.stringify({url: url, uuid: listen_uuid}),
         headers: {
             'Content-Type': 'application/json'
         }
@@ -65,21 +67,51 @@
         const ttfb_server = response.headers.get("X-TTFB");
         const latency = ttfb_client - ttfb_server;
 
-        result_execution_speed.innerHTML = `Time to main host:<br>TTFB: ${ttfb_client.toFixed(2)} s <br>Latency: ${latency.toFixed(2)} s`;
+        result_execution_speed.innerHTML = `Time to response:<br>TTFB: ${ttfb_client.toFixed(2)} s <br>Latency: ${latency.toFixed(2)} s`;
         
         return response.json()
       })
       .then(data => {
+        stop_listen_upload(source);
         form_submit_btn.disabled = false;
-        result_tebi.innerHTML = 'Tebi:<br>' + JSON.stringify(data.tebi, null, 2);
-        result_ordinary.innerHTML = 'Ordinary:<br>' + JSON.stringify(data.ordinary, null, 2);
+        result_upload.innerHTML = 'Upload status:<br>' + JSON.stringify(data, null, 2);
       })
       .catch(error => {
+        stop_listen_upload(source);
         console.error(error);
-        result_upload_url.innerHTML = "Error";
+        result_upload.innerHTML = "Error";
         form_submit_btn.disabled = false;
       });
     }
+
+    function uuidv4() {
+      return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+      );
+    }
+
+    function listen_upload(result_container) {
+      const source = new EventSource(`${listen_url}?channel=${listen_uuid}`);
+
+      source.addEventListener('message', event => {
+        console.log(event.data);
+        result_upload.innerHTML = 'Upload status:<br>' + JSON.stringify(JSON.parse(event.data), null, 2);
+      });
+
+      source.addEventListener('error', error => {
+        console.error(error);
+      });
+
+      return source;
+    }
+
+    function stop_listen_upload(source) {
+      source.close();
+    }
+
+    function main() {}
+    
+    main();
 
     // Event listeners
 

@@ -7,6 +7,9 @@ import time
 import asyncio
 import boto3
 from app.models.test import Test
+from tldextract import extract
+import socket
+from flask_sse import sse
 
 
 CHUNK_SIZE = 1024 * 1024 * 1
@@ -14,6 +17,8 @@ DOWNLOADING_SPEED = 100 * 1024 * 1024 / 8
 
 
 api_upload_url_test_endpoint = '/api/upload-url-test'
+api_host_test = '/api/host-test'
+api_listen_upload_endpoint = '/api/listen-upload'
 
 api_upload_url_endpoint = '/api/upload-url'
 api_upload_file_endpoint = '/api/upload-file'
@@ -22,6 +27,84 @@ api_test_download_speed_endpoint = '/api/test-download-speed'
 
 
 # Helper functions
+
+
+class UploadStatus:
+    '''
+    status structure:
+        {
+            'tebi_status': int,
+            'vps': [
+                {
+                    vps_ip: str,
+                    tebi: int,
+                    object: int
+                }
+            ]
+        }
+
+    tebi_status:
+    0 - waiting
+    1 - uploading file
+    2 - waiting for replication
+    3 - replication completed
+
+    test_status:
+    0 - waiting
+    1 - speed test started
+    2 - speed test completed
+    '''
+
+    def __init__(self, uuid) -> None:
+        self.tebi_status = None
+        self.vps = {}
+        self.uuid = uuid
+
+    def set_tebi_status(self, status: int):
+        if status not in [0, 1, 2, 3]:
+            raise ValueError('status must be either 0, 1, 2, or 3')
+        self.tebi_status = status
+
+        self.make_announcement()
+
+    def vps_update_status(self, vps_ip: str, storage: str, status: int):
+        '''update vps status
+
+        Args:
+            `vps_ip` (str): ip address of vps
+            `storage` (str): 'tebi' or 'object'
+            `status` (str): 0 - waiting, 1 - speed test started, 2 - speed test completed
+
+        Raises:
+            ValueError: _description_
+        '''
+        if storage not in ['tebi', 'object']:
+            raise ValueError('storage must be either \'tebi\' or \'object\'')
+
+        if vps_ip not in self.vps.keys():
+            self.vps[vps_ip] = {}
+
+        self.vps[vps_ip][storage] = status
+
+        self.make_announcement()
+
+    def get_status(self):
+        vps_statuses = []
+
+        for vps_ip, vps_storage in self.vps.items():
+            vps_statuses.append({
+                'vps_ip': vps_ip,
+                'tebi': vps_storage.get('tebi', 0),
+                'object': vps_storage.get('object', 0)
+            })
+
+        return {
+            'tebi_status': self.tebi_status,
+            'vps': vps_statuses
+        }
+
+    def make_announcement(self):
+        sse.publish(self.get_status(), channel=self.uuid)
 
 
 def tebi_get_client():
@@ -42,16 +125,33 @@ def get_bucket():
     ).Bucket(current_app.config['TEBI_BUCKET'])
 
 
-async def publish(endpoint, json):
+async def publish(url, file_name, upload_status: UploadStatus):
+    '''
+    returns dict
+    {
+        'ok': int,
+        'failed': int,
+        'responses': []
+    }
+    '''
     this_host_url = current_app.config['MAIN_HOST_URL']
     hosts_urls = current_app.config['HOSTS_URLS'][:]
     hosts_urls.append(this_host_url)
 
-    async def make_post(session, host, endpoint, json):
+    output = {
+        'ok': 0,
+        'failed': 0,
+        'responses': []
+    }
+
+    async def make_post(session, host, endpoint, json) -> tuple[ClientResponse, dict]:
         start_time = time.monotonic()
 
         resp: ClientResponse
         async with session.post(f'{host}{endpoint}', json=json) as resp:
+            if not resp.ok:
+                return resp, {'ok': False, 'error': f'Couldn\'t publish to host \'{host}\''}
+
             end_time = time.monotonic()
 
             json_mod = await resp.json()
@@ -59,38 +159,40 @@ async def publish(endpoint, json):
             ttfb_client = end_time - start_time
             ttfb_server = float(resp.headers['x-ttfb'])
 
+            json_mod['ok'] = True
             json_mod['ttfb'] = round(ttfb_client, 2)
             json_mod['latency'] = round(ttfb_client - ttfb_server, 2)
 
-            return {'response': resp, 'json': json_mod}
+            return resp, json_mod
 
     async with ClientSession() as session:
-        tasks = []
+        for h_url in hosts_urls:
+            h_ip = get_ip_from_url(h_url)
+            upload_status.vps_update_status(h_ip, 'object', 1)
+            upload_status.vps_update_status(h_ip, 'tebi', 1)
 
-        for host in hosts_urls:
-            task = asyncio.create_task(make_post(session, host, endpoint, json))
-            tasks.append(task)
+            url_resp, url_json = await make_post(session, h_url, api_upload_url_endpoint, {'url': url})
+            tebi_resp, tebi_json = await make_post(session, h_url, api_upload_tebi_endpoint, {'file_name': file_name})
 
-        hosts_responses = await asyncio.gather(*tasks)
+            upload_status.vps_update_status(h_ip, 'object', 2)
+            upload_status.vps_update_status(h_ip, 'tebi', 2)
 
-    responses = []
+            if url_resp.ok or tebi_resp.ok:
+                vps_name = url_json['vps_name'] if url_resp.ok else tebi_json['vps_name']
 
-    for h_resp in hosts_responses:
-        if h_resp['response'].ok:
-            responses.append(h_resp['json'])
-        else:
-            current_app.logger.error(f'Couldn\'t publish to host \'{host + endpoint}\'. Response: {h_resp}')
-            responses.append({'error': f'Couldn\'t publish to host \'{host}\''})
+                output['responses'].append(
+                    {
+                        'vps_name': vps_name,
+                        'vps_ip': get_ip_from_url(vps_name),
+                        'tebi': tebi_json,
+                        'object': url_json
+                    }
+                )
 
-    return responses
+            output['ok'] += url_json['ok'] + tebi_json['ok']
+            output['failed'] += 2 - url_json['ok'] - tebi_json['ok']
 
-
-async def publish_url(url: str):
-    return await publish(api_upload_url_endpoint, {'url': url})
-
-
-async def publish_tebi(file_name: str):
-    return await publish(api_upload_tebi_endpoint, {'file_name': file_name})
+    return output
 
 
 async def upload_file(file, file_name):
@@ -121,6 +223,20 @@ async def upload_file_by_chunks(stream: ClientResponse, file_name):
 
         temp.close()
         os.unlink(temp.name)
+
+
+def get_ip_from_url(url):
+    ext = extract(url)
+
+    if not ext.suffix:
+        return ext.domain
+
+    subdomain = ext.subdomain if ext.subdomain else 'www'
+    return socket.gethostbyname(subdomain + '.' + ext.domain + '.' + ext.suffix)
+
+
+def format_download_time(seconds):
+    return round(seconds * 1000, 3)
 
 
 @bp.before_request
@@ -160,6 +276,7 @@ async def api_upload_url_test():
     '''
     request example:
     {
+        "uuid": 'uuid',
         "url": "http://kyi.download.datapacket.com/10mb.bin",
     }
     '''
@@ -167,17 +284,37 @@ async def api_upload_url_test():
         return make_response({'error': 'This is not main server'}, 400)
 
     url = request.json.get('url')
+
+    channel_uuid = request.json.get('uuid')
+    upload_status = UploadStatus(channel_uuid)
+
+    if not url:
+        return make_response({'error': 'No url provided'}, 400)
+
+    if not channel_uuid:
+        return make_response({'error': 'No uuid provided'}, 400)
+
+    upload_status.set_tebi_status(0)  # waiting
+
     file_name = time.strftime('%Y-%m-%d_%H-%M-%S_') + url.split('/')[-1]
+    file_ip = get_ip_from_url(url)
 
     response = {
-        'tebi': None,
-        'ordinary': None
+        'file_size': None,
+        'file_ip': file_ip,
+        'ok': 0,
+        'failed': 0,
+        'tebi_servers': None,
+        'vps': None,
     }
 
     async with ClientSession() as session:
         async with session.get(url) as resp:
             if not resp.ok:
-                response['tebi'] = {'error': f'Couldn\'t publish url \'{url}\'. Response: {resp}'}
+                current_app.logger.error(f'Couldn\'t get file from \'{url}\'. Response: {resp}')
+                return {'error': f'Couldn\'t get file from \'{url}\'.'}, 400
+
+            upload_status.set_tebi_status(1)  # uploading file
 
             downloaded_size = 0
             with tempfile.NamedTemporaryFile(delete=False) as temp:
@@ -193,6 +330,7 @@ async def api_upload_url_test():
                 os.unlink(temp.name)
 
             with tempfile.NamedTemporaryFile(delete=False) as new_temp_file:
+                response['file_size'] = downloaded_size / (1024 ** 2)
                 new_temp_file.truncate(downloaded_size)
 
                 with open(new_temp_file.name, 'rb') as f:
@@ -200,6 +338,8 @@ async def api_upload_url_test():
 
                 new_temp_file.close()
                 os.unlink(new_temp_file.name)
+
+    upload_status.set_tebi_status(2)  # waiting for replication
 
     s3_client = tebi_get_client()
 
@@ -224,12 +364,16 @@ async def api_upload_url_test():
             await asyncio.sleep(2)
 
     if replication_complete:
-        response['tebi'] = await publish_tebi(file_name)
+        upload_status.set_tebi_status(3)  # replication completed
+        publish_data = await publish(url, file_name, upload_status)
+        response['vps'] = publish_data['responses']
+        response['ok'] = publish_data['ok']
+        response['failed'] = publish_data['failed']
+        response['tebi_servers'] = replication_status
         get_bucket().delete_objects(Delete={'Objects': [{'Key': file_name}]})
     else:
-        response['tebi'] = {'error': f'Couldn\'t publish url \'{url}\'. Replication status: {replication_status}'}
-
-    response['ordinary'] = await publish_url(url)
+        current_app.logger.error(f'Couldn\'t replicate file. Replication status: {replication_status}')
+        return {'error': f'Couldn\'t replicate file. Replication status: {replication_status}'}, 500
 
     return response
 
@@ -264,8 +408,8 @@ async def api_upload_tebi():
         os.unlink(temp.name)
 
     return {
-        'host_name': current_app.config['HOST_NAME'],
-        'execution_time': round(time.monotonic() - x1, 2),
+        'vps_name': current_app.config['HOST_NAME'],
+        'download_time': format_download_time(time.monotonic() - x1),
     }
 
 
@@ -284,8 +428,8 @@ async def api_upload_url():
             if resp.ok:
                 await upload_file_by_chunks(resp, file_name)
                 return {
-                    'host_name': current_app.config['HOST_NAME'],
-                    'execution_time': round(time.monotonic() - x1, 2),
+                    'vps_name': current_app.config['HOST_NAME'],
+                    'download_time': format_download_time(time.monotonic() - x1),
                 }
             else:
                 current_app.logger.error(f'Couldn\'t upload file by url \'{url}\'. Response: {resp}')
@@ -303,6 +447,6 @@ async def api_upload_file():
     await upload_file(file, file_name)
 
     return {
-        'host_name': current_app.config['HOST_NAME'],
-        'execution_time': round(time.monotonic() - x1, 2),
+        'vps_name': current_app.config['HOST_NAME'],
+        'download_time': format_download_time(time.monotonic() - x1),
     }

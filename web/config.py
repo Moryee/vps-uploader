@@ -34,6 +34,8 @@ class Config:
         MAIN_HOST_URL = os.environ.get('MAIN_HOST_URL')
         HOSTS_URLS = os.environ.get('HOSTS_URLS').split(',') if os.environ.get('HOSTS_URLS') else []
 
+        REDIS_URL = os.environ.get('REDIS_URL')
+
         # Database
 
         SQL_ENGINE = os.environ.get('SQL_ENGINE')

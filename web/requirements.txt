@@ -7,7 +7,9 @@ flask-cors==3.0.10
 tldextract==3.4.0
 geopy==2.3.0
 gunicorn==20.1.0
+gevent==22.10.2
 boto3==1.26.129
+Flask-SSE==1.0.0
 
 flake8
 autopep8

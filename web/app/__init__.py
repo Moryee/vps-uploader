@@ -5,6 +5,7 @@ import logging
 from logging.config import dictConfig
 import os
 from .extensions import scheduler, db
+from flask_sse import sse
 
 
 def create_app(config_class=Config):
@@ -70,11 +71,16 @@ def create_app(config_class=Config):
 
     # Flask extensions
     if app.config['MAIN_HOST']:
+        # database
         db.init_app(app)
 
+        # scheduler
         scheduler.init_app(app)
         from .main import tasks
         scheduler.start()
+
+        # sse
+        app.register_blueprint(sse, url_prefix='/stream')
 
     # Blueprints
 
