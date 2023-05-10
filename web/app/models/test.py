@@ -1,6 +1,8 @@
 from app.extensions import db
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import func
+from sqlalchemy.orm import validates
+import json
 
 
 class Test(db.Model):
@@ -11,3 +13,10 @@ class Test(db.Model):
 
     def __repr__(self):
         return f'<Test "{self.datetime}">'
+
+    @validates('content')
+    def validate_content(self, key, content):
+        if not isinstance(content, dict):
+            raise ValueError('Content must be a dict')
+
+        return json.dumps(content)

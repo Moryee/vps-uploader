@@ -17,7 +17,7 @@ def test_download_speed():
 
         current_app.logger.info('Testing download speed...')
         host = current_app.config['MAIN_HOST_URL']
-        response = requests.post(url=f'{host}{api_upload_url_test_endpoint}', json={'url': url})
+        response = requests.post(url=f'{host}{api_upload_url_test_endpoint}', json={'url': url, 'uuid': 'test'})
         if response.ok:
             db.create_all()
             test = Test(content=response.json(), url=url)
