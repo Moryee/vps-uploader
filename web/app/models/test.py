@@ -9,6 +9,7 @@ class Test(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     datetime = db.Column(db.DateTime(timezone=True), index=True, default=func.now())
     url = db.Column(db.String(256))
+    execution_time = db.Column(db.Float)
     content = db.Column(JSONB)
 
     def __repr__(self):

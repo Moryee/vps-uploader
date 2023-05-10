@@ -150,6 +150,7 @@ async def publish(url, file_name, upload_status: UploadStatus):
         resp: ClientResponse
         async with session.post(f'{host}{endpoint}', json=json) as resp:
             if not resp.ok:
+                current_app.logger.error(f'Couldn\'t publish to host \'{host}\'. Response: {resp.status} {resp.reason}')
                 return resp, {'ok': False, 'error': f'Couldn\'t publish to host \'{host}\''}
 
             end_time = time.monotonic()

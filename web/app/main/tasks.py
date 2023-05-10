@@ -1,12 +1,12 @@
 from app.extensions import scheduler
 from flask import current_app
-import requests
 from app.extensions import db
 from app.models.test import Test
 from datetime import datetime, timedelta, timezone
+import aiohttp
 
 
-def test_download_speed():
+async def test_download_speed():
     from app.main.routes import api_upload_url_test_endpoint
 
     with scheduler.app.app_context():
@@ -17,10 +17,13 @@ def test_download_speed():
 
         current_app.logger.info('Testing download speed...')
         host = current_app.config['MAIN_HOST_URL']
-        response = requests.post(url=f'{host}{api_upload_url_test_endpoint}', json={'url': url, 'uuid': 'test'})
+
+        async with aiohttp.ClientSession() as session:
+            response = await session.post(url=f'{host}{api_upload_url_test_endpoint}', json={'url': url, 'uuid': 'test'})
+
         if response.ok:
             db.create_all()
-            test = Test(content=response.json(), url=url)
+            test = Test(content=await response.json(), url=url, execution_time=round(float(response.headers['X-TTFB']) * 1000, 3))
             db.session.add(test)
             db.session.commit()
 
@@ -30,8 +33,8 @@ def test_download_speed():
 
 
 @scheduler.task('cron', id='job_tests', hour='0,6,12,18', minute=0, misfire_grace_time=3600, timezone='Europe/Kiev')
-def job_tests():
-    test_download_speed()
+async def job_tests():
+    await test_download_speed()
 
 
 @scheduler.task('cron', id='job_clean_tests', day='*', hour=0, minute=0, misfire_grace_time=3600, timezone='Europe/Kiev')
