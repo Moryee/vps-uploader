@@ -6,6 +6,20 @@ from logging.config import dictConfig
 import os
 from .extensions import scheduler, db
 from flask_sse import sse
+from celery import Celery, Task
+
+
+def celery_init_app(app: Flask) -> Celery:
+    class FlaskTask(Task):
+        def __call__(self, *args: object, **kwargs: object) -> object:
+            with app.app_context():
+                return self.run(*args, **kwargs)
+
+    celery_app = Celery(app.name, task_cls=FlaskTask)
+    celery_app.config_from_object(app.config["CELERY"])
+    celery_app.set_default()
+    app.extensions["celery"] = celery_app
+    return celery_app
 
 
 def create_app(config_class=Config):
@@ -81,6 +95,9 @@ def create_app(config_class=Config):
 
         # sse
         app.register_blueprint(sse, url_prefix='/stream')
+
+        # celery
+        celery_init_app(app)
 
     # Blueprints
 

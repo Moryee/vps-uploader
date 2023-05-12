@@ -38,78 +38,67 @@
     let upload_url_container = document.getElementById("upload-url-container");
     let form_upload_url = upload_url_container.querySelector("form");
     let form_submit_btn = form_upload_url.querySelector("input[type=submit]");
-    
-    let listen_uuid = uuidv4();
+
     let result_execution_speed = document.getElementById("result-execution-speed");
     let result_upload = document.getElementById("result-upload");
 
     // Functions
 
-    function upload_url_submit(e) {
+    async function upload_url_submit(e) {
       e.preventDefault();
       result_execution_speed.innerHTML = '';
       result_upload.innerHTML = '';
       form_submit_btn.disabled = true;
 
       let url = form_upload_url.url.value;
-      const startTime = performance.now();
 
-      source = listen_upload(result_upload);
-
-      fetch(upload_url, {
+      const response = await fetch(upload_url, {
         method: "POST",
-        body: JSON.stringify({url: url, uuid: listen_uuid}),
+        body: JSON.stringify({url: url}),
         headers: {
-            'Content-Type': 'application/json'
+          'Content-Type': 'application/json'
         }
       })
-      .then(response => {
-        const endTime = performance.now();
-
-        const ttfb_client = (endTime - startTime) / 1000;
-        const ttfb_server = response.headers.get("X-TTFB");
-        const latency = ttfb_client - ttfb_server;
-
-        result_execution_speed.innerHTML = `Time to response:<br>TTFB: ${ttfb_client.toFixed(2)} s <br>Latency: ${latency.toFixed(2)} s`;
-        
-        return response.json()
-      })
+      .then(response => { return response.json(); })
       .then(data => {
-        stop_listen_upload(source);
-        form_submit_btn.disabled = false;
-        result_upload.innerHTML = 'Upload status:<br>' + JSON.stringify(data, null, 2);
+        console.log(data)
+        const sse_stream_url = data.sse_stream_url;
+        listen_upload(sse_stream_url, result_upload);
       })
       .catch(error => {
-        stop_listen_upload(source);
         console.error(error);
         result_upload.innerHTML = "Error";
         form_submit_btn.disabled = false;
       });
     }
 
-    function uuidv4() {
-      return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
-      );
-    }
-
-    function listen_upload(result_container) {
-      const source = new EventSource(`${listen_url}?channel=${listen_uuid}`);
+    function listen_upload(listen_url, result_container) {
+      const source = new EventSource(listen_url);
+      const startTime = performance.now();
 
       source.addEventListener('message', event => {
-        console.log(event.data);
-        result_upload.innerHTML = 'Upload status:<br>' + JSON.stringify(JSON.parse(event.data), null, 2);
+        const data = JSON.parse(event.data)
+        console.log(data);
+
+        if (data.finished) {
+          const endTime = performance.now();
+
+          const ttfb_client = (endTime - startTime) / 1000;
+
+          result_execution_speed.innerHTML = `Time to response:<br>TTFB: ${ttfb_client.toFixed(2)} s`;
+
+          form_submit_btn.disabled = false;
+          source.close();
+        } else {
+          result_upload.innerHTML = 'Upload status:<br>' + JSON.stringify(data, null, 2);
+        }
       });
 
       source.addEventListener('error', error => {
+        form_submit_btn.disabled = false;
+        source.close();
         console.error(error);
       });
-
-      return source;
-    }
-
-    function stop_listen_upload(source) {
-      source.close();
     }
 
     function main() {}

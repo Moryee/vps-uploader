@@ -10,6 +10,8 @@ from app.models.test import Test
 from tldextract import extract
 import socket
 from flask_sse import sse
+import uuid
+from celery import shared_task
 
 
 CHUNK_SIZE = 1024 * 1024 * 1
@@ -18,7 +20,6 @@ DOWNLOADING_SPEED = 100 * 1024 * 1024 / 8
 
 api_upload_url_test_endpoint = '/api/upload-url-test'
 api_host_test = '/api/host-test'
-api_listen_upload_endpoint = '/api/listen-upload'
 
 api_upload_url_endpoint = '/api/upload-url'
 api_upload_file_endpoint = '/api/upload-file'
@@ -33,41 +34,122 @@ class UploadStatus:
     '''
     status structure:
         {
-            'tebi_status': int,
-            'vps': [
-                {
-                    vps_ip: str,
-                    tebi: int,
-                    object: int
+            "size": float kb,
+            "tebi_status": int,
+            "tebi_servers": "DE:1,USE:1,USW:2,SGP:1",
+            "vps": {
+                "vps_name_1": {
+                    "ip": "10.10.10.10",
+                    "tebi": {
+                        "ip": "100.100.100.100",
+                        "status": "1",
+                        "latency": "10.234",
+                        "ttfb": "123.456",
+                        "time": "1234.765"
+                    },
+                    "object": {
+                        "ip": "100.100.100.100",
+                        "status": "2",
+                        "latency": "12.543",
+                        "ttfb": "123.654",
+                        "time": "123.456"
+                    }
                 }
-            ]
+            }
         }
 
     tebi_status:
-    0 - waiting
-    1 - uploading file
-    2 - waiting for replication
-    3 - replication completed
+        0 - waiting
+        1 - uploading file
+        2 - waiting for replication
+        3 - replication completed
 
     test_status:
-    0 - waiting
-    1 - speed test started
-    2 - speed test completed
+        0 - waiting
+        1 - speed test started
+        2 - speed test completed
     '''
 
     def __init__(self, uuid) -> None:
-        self.tebi_status = None
-        self.vps = {}
-        self.uuid = uuid
+        self._uuid = str(uuid)
 
-    def set_tebi_status(self, status: int):
-        if status not in [0, 1, 2, 3]:
+        self._file_ip = None
+        self._file_size = None
+        self._tebi_status = None
+        self._tebi_servers = None
+
+        self._ok = 0
+        self._failed = 0
+        self._vps = {}
+
+        for vps_name, vps_url in current_app.config['VPS_URLS'].items():
+            self._vps[vps_name] = {
+                'ip': get_ip_from_url(vps_url),
+                'tebi': {
+                    'status': 0
+                },
+                'object': {
+                    'status': 0
+                }
+            }
+
+        self._finished = False
+
+    @property
+    def file_ip(self):
+        return self._file_ip
+
+    @file_ip.setter
+    def file_ip(self, value):
+        self._file_ip = value
+
+    @property
+    def file_size(self):
+        return self._file_size
+
+    @file_size.setter
+    def file_size(self, value):
+        self._file_size = value
+
+    @property
+    def tebi_status(self):
+        return self._tebi_status
+
+    @tebi_status.setter
+    def tebi_status(self, value):
+        if value not in [0, 1, 2, 3]:
             raise ValueError('status must be either 0, 1, 2, or 3')
-        self.tebi_status = status
+        self._tebi_status = value
 
-        self.make_announcement()
+        self._make_announcement()
 
-    def vps_update_status(self, vps_ip: str, storage: str, status: int):
+    @property
+    def tebi_servers(self):
+        return self._tebi_servers
+
+    @tebi_servers.setter
+    def tebi_servers(self, value):
+        self._tebi_servers = value
+
+        self._make_announcement()
+
+    @property
+    def ok(self):
+        return self._ok
+
+    @ok.setter
+    def ok(self, value):
+        self._ok = value
+
+    @property
+    def failed(self):
+        return self._failed
+
+    @failed.setter
+    def failed(self, value):
+        self._failed = value
+
+    def vps_update_status(self, vps_name: str, storage: str, status: int):
         '''update vps status
 
         Args:
@@ -81,119 +163,203 @@ class UploadStatus:
         if storage not in ['tebi', 'object']:
             raise ValueError('storage must be either \'tebi\' or \'object\'')
 
-        if vps_ip not in self.vps.keys():
-            self.vps[vps_ip] = {}
+        if vps_name not in self._vps.keys():
+            self._vps[vps_name] = {}
 
-        self.vps[vps_ip][storage] = status
+        if storage not in self._vps[vps_name].keys():
+            self._vps[vps_name][storage] = {}
 
-        self.make_announcement()
+        self._vps[vps_name][storage]['status'] = status
 
-    def get_status(self):
-        vps_statuses = []
+        self._make_announcement()
 
-        for vps_ip, vps_storage in self.vps.items():
-            vps_statuses.append({
-                'vps_ip': vps_ip,
-                'tebi': vps_storage.get('tebi', 0),
-                'object': vps_storage.get('object', 0)
-            })
+    def vps_complete_status(self, vps_name: str, storage: str, latency: float, ttfb: float, time: float):
+        if storage not in ['tebi', 'object']:
+            raise ValueError('storage must be either \'tebi\' or \'object\'')
 
-        return {
-            'tebi_status': self.tebi_status,
-            'vps': vps_statuses
+        if vps_name not in self._vps.keys():
+            raise ValueError(f'vps_name \'{vps_name}\' not found')
+
+        self._vps[vps_name][storage] = {
+            'status': 2,
+            'latency': latency,
+            'ttfb': ttfb,
+            'time': time,
+            'ok': True
         }
 
-    def make_announcement(self):
-        sse.publish(self.get_status(), channel=self.uuid)
+        self.ok += 1
+
+        self._make_announcement()
+
+    def vps_failed_status(self, vps_name: str, storage: str):
+        if storage not in ['tebi', 'object']:
+            raise ValueError('storage must be either \'tebi\' or \'object\'')
+
+        if vps_name not in self._vps.keys():
+            raise ValueError(f'vps_name \'{vps_name}\' not found')
+
+        self.failed += 1
+
+        self._vps[vps_name][storage] = {
+            'ok': False
+        }
+
+    def get_status(self):
+        output = {}
+
+        output['file_ip'] = self._file_ip
+
+        if self._file_size is not None:
+            output['file_size'] = self._file_size
+
+        if self._tebi_status is not None:
+            output['tebi_status'] = self._tebi_status
+
+        if self._tebi_servers is not None:
+            output['tebi_servers'] = self._tebi_servers
+
+        output['ok'] = self._ok
+        output['failed'] = self._failed
+        output['vps'] = self._vps
+        output['finished'] = self._finished
+
+        return output
+
+    def _make_announcement(self):
+        status = self.get_status()
+        sse.publish(status, channel=self._uuid)
+
+    def finished(self):
+        self._finished = True
+        self._make_announcement()
 
 
-def tebi_get_client():
-    return boto3.client(
-        service_name='s3',
-        aws_access_key_id=current_app.config['TEBI_KEY'],
-        aws_secret_access_key=current_app.config['TEBI_SECRET'],
-        endpoint_url='https://s3.tebi.io'
-    )
+@shared_task(ignore_result=False)
+def upload_url_task(url, channel_uuid):
+    asyncio.run(upload_url(url, channel_uuid))
 
 
-def get_bucket():
-    return boto3.resource(
-        service_name='s3',
-        aws_access_key_id=current_app.config['TEBI_KEY'],
-        aws_secret_access_key=current_app.config['TEBI_SECRET'],
-        endpoint_url='https://s3.tebi.io'
-    ).Bucket(current_app.config['TEBI_BUCKET'])
+async def upload_url(url, channel_uuid):
+    file_ip = get_ip_from_url(url)
+
+    upload_status = UploadStatus(channel_uuid)
+    upload_status.tebi_status = 0  # waiting
+
+    file_name, file_size = await replicate_url(url, upload_status)
+
+    upload_status.file_size = file_size
+    upload_status.file_ip = file_ip
+
+    await publish(url, file_name, upload_status)
+
+
+async def replicate_url(url, upload_status: UploadStatus):
+    '''
+    returns tuple `file_name`, `file_size`
+    '''
+
+    correct_replication_status = 'DE:1,SGP:1,USE:1,USW:1'
+    file_name: str = time.strftime('%Y-%m-%d_%H-%M-%S_') + url.split('/')[-1]
+    file_size = 0
+
+    async with ClientSession() as session:
+        async with session.get(url) as resp:
+            if not resp.ok:
+                current_app.logger.error(f'Couldn\'t get file from \'{url}\'. Response: {resp}')
+                return {'error': f'Couldn\'t get file from \'{url}\'.'}, 400
+
+            upload_status.tebi_status = 1  # uploading file
+
+            downloaded_size = 0
+            with tempfile.NamedTemporaryFile(delete=False) as temp:
+                while True:
+                    chunk = await resp.content.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    downloaded_size += len(chunk)
+                    temp.write(chunk)
+                temp.seek(0)
+
+                temp.close()
+                os.unlink(temp.name)
+
+            with tempfile.NamedTemporaryFile(delete=False) as new_temp_file:
+                file_size = downloaded_size / (1024 ** 2)
+                new_temp_file.truncate(downloaded_size)
+
+                with open(new_temp_file.name, 'rb') as f:
+                    get_bucket().put_object(Key=file_name, Body=f)
+
+                new_temp_file.close()
+                os.unlink(new_temp_file.name)
+
+    upload_status.tebi_status = 2  # waiting for replication
+
+    s3_client = tebi_get_client()
+
+    def is_all_replicated(replication_status):
+        return replication_status == correct_replication_status
+
+    replication_complete = False
+    tries = 0
+    while not replication_complete and tries < 20:
+        try:
+            resp = s3_client.head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
+            replication_status = resp.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-tb-replication', None)
+
+            if is_all_replicated(replication_status):
+                replication_complete = True
+                upload_status.tebi_status = 3  # replication complete
+                upload_status.tebi_servers = replication_status
+
+        except Exception as e:
+            print(f"Error checking replication status: {e}")
+            break
+
+        if not replication_complete:
+            tries += 1
+            await asyncio.sleep(2)
+
+    return file_name, file_size
 
 
 async def publish(url, file_name, upload_status: UploadStatus):
-    '''
-    returns dict
-    {
-        'ok': int,
-        'failed': int,
-        'responses': []
-    }
-    '''
-    this_host_url = current_app.config['MAIN_HOST_URL']
-    hosts_urls = current_app.config['HOSTS_URLS'][:]
-    hosts_urls.append(this_host_url)
+    vps_urls: dict = current_app.config['VPS_URLS'].copy()
 
-    output = {
-        'ok': 0,
-        'failed': 0,
-        'responses': []
-    }
-
-    async def make_post(session, host, endpoint, json) -> tuple[ClientResponse, dict]:
+    async def make_post(session, vps_name, vps_url, endpoint, json, storage_type) -> tuple[ClientResponse, dict]:
+        current_app.logger.info('starting')
         start_time = time.monotonic()
+        upload_status.vps_update_status(vps_name, storage_type, 1)
 
         resp: ClientResponse
-        async with session.post(f'{host}{endpoint}', json=json) as resp:
+        async with session.post(f'{vps_url}{endpoint}', json=json) as resp:
             if not resp.ok:
-                current_app.logger.error(f'Couldn\'t publish to host \'{host}\'. Response: {resp.status} {resp.reason}')
-                return resp, {'ok': False, 'error': f'Couldn\'t publish to host \'{host}\''}
+                current_app.logger.error(f'Couldn\'t publish to host \'{vps_url}{endpoint}\'. Response: {resp.status} {resp.reason}')
+                upload_status.vps_failed_status(vps_name, storage_type)
+                return
 
             end_time = time.monotonic()
-
-            json_mod = await resp.json()
 
             ttfb_client = end_time - start_time
             ttfb_server = float(resp.headers['x-ttfb'])
 
-            json_mod['ok'] = True
-            json_mod['ttfb'] = round(ttfb_client, 2)
-            json_mod['latency'] = round(ttfb_client - ttfb_server, 2)
+            ttfb = round(ttfb_client, 2)
+            latency = round(ttfb_client - ttfb_server, 2)
 
-            return resp, json_mod
+            current_app.logger.info('done')
+            upload_status.vps_complete_status(vps_name, storage_type, latency, ttfb, (end_time - start_time) * 1000)
 
     async with ClientSession() as session:
-        for h_url in hosts_urls:
-            h_ip = get_ip_from_url(h_url)
-            upload_status.vps_update_status(h_ip, 'object', 1)
-            upload_status.vps_update_status(h_ip, 'tebi', 1)
+        for vps_name, vps_url in vps_urls.items():
+            tasks = []
 
-            url_resp, url_json = await make_post(session, h_url, api_upload_url_endpoint, {'url': url})
-            tebi_resp, tebi_json = await make_post(session, h_url, api_upload_tebi_endpoint, {'file_name': file_name})
+            tasks.append(asyncio.create_task(make_post(session, vps_name, vps_url, api_upload_tebi_endpoint, {'file_name': file_name}, 'tebi')))
+            tasks.append(asyncio.create_task(make_post(session, vps_name, vps_url, api_upload_url_endpoint, {'url': url}, 'object')))
 
-            upload_status.vps_update_status(h_ip, 'object', 2)
-            upload_status.vps_update_status(h_ip, 'tebi', 2)
+            await asyncio.gather(*tasks)
 
-            if url_resp.ok or tebi_resp.ok:
-                vps_name = url_json['vps_name'] if url_resp.ok else tebi_json['vps_name']
-
-                output['responses'].append(
-                    {
-                        'vps_name': vps_name,
-                        'vps_ip': get_ip_from_url(vps_name),
-                        'tebi': tebi_json,
-                        'object': url_json
-                    }
-                )
-
-            output['ok'] += url_json['ok'] + tebi_json['ok']
-            output['failed'] += 2 - url_json['ok'] - tebi_json['ok']
-
-    return output
+    upload_status.finished()
 
 
 async def upload_file(file, file_name):
@@ -240,6 +406,24 @@ def format_download_time(seconds):
     return round(seconds * 1000, 3)
 
 
+def tebi_get_client():
+    return boto3.client(
+        service_name='s3',
+        aws_access_key_id=current_app.config['TEBI_KEY'],
+        aws_secret_access_key=current_app.config['TEBI_SECRET'],
+        endpoint_url='https://s3.tebi.io'
+    )
+
+
+def get_bucket():
+    return boto3.resource(
+        service_name='s3',
+        aws_access_key_id=current_app.config['TEBI_KEY'],
+        aws_secret_access_key=current_app.config['TEBI_SECRET'],
+        endpoint_url='https://s3.tebi.io'
+    ).Bucket(current_app.config['TEBI_BUCKET'])
+
+
 @bp.before_request
 def before_request():
     request.start_time = time.time()
@@ -253,6 +437,13 @@ def after_request(response):
 
 
 # Routes
+
+
+@bp.route('/start-test', methods=['GET'])
+async def start_test():
+    from app.main.tasks import test_download_speed
+    await test_download_speed()
+    return {}, 200
 
 
 @bp.route('/')
@@ -285,98 +476,18 @@ async def api_upload_url_test():
         return make_response({'error': 'This is not main server'}, 400)
 
     url = request.json.get('url')
-
-    channel_uuid = request.json.get('uuid')
-    upload_status = UploadStatus(channel_uuid)
+    channel_uuid = str(uuid.uuid4())
 
     if not url:
         return make_response({'error': 'No url provided'}, 400)
 
-    if not channel_uuid:
-        return make_response({'error': 'No uuid provided'}, 400)
+    upload_url_task.delay(url, channel_uuid)
 
-    upload_status.set_tebi_status(0)  # waiting
-
-    file_name = time.strftime('%Y-%m-%d_%H-%M-%S_') + url.split('/')[-1]
-    file_ip = get_ip_from_url(url)
-
-    response = {
-        'file_size': None,
-        'file_ip': file_ip,
-        'ok': 0,
-        'failed': 0,
-        'tebi_servers': None,
-        'vps': None,
-    }
-
-    async with ClientSession() as session:
-        async with session.get(url) as resp:
-            if not resp.ok:
-                current_app.logger.error(f'Couldn\'t get file from \'{url}\'. Response: {resp}')
-                return {'error': f'Couldn\'t get file from \'{url}\'.'}, 400
-
-            upload_status.set_tebi_status(1)  # uploading file
-
-            downloaded_size = 0
-            with tempfile.NamedTemporaryFile(delete=False) as temp:
-                while True:
-                    chunk = await resp.content.read(CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    downloaded_size += len(chunk)
-                    temp.write(chunk)
-                temp.seek(0)
-
-                temp.close()
-                os.unlink(temp.name)
-
-            with tempfile.NamedTemporaryFile(delete=False) as new_temp_file:
-                response['file_size'] = downloaded_size / (1024 ** 2)
-                new_temp_file.truncate(downloaded_size)
-
-                with open(new_temp_file.name, 'rb') as f:
-                    get_bucket().put_object(Key=file_name, Body=f)
-
-                new_temp_file.close()
-                os.unlink(new_temp_file.name)
-
-    upload_status.set_tebi_status(2)  # waiting for replication
-
-    s3_client = tebi_get_client()
-
-    def is_all_replicated(replication_status):
-        return replication_status == 'DE:1,SGP:1,USE:1,USW:1'
-
-    replication_complete = False
-    tries = 0
-    while not replication_complete and tries < 20:
-        try:
-            resp = s3_client.head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
-            replication_status = resp.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-tb-replication', None)
-
-            if is_all_replicated(replication_status):
-                replication_complete = True
-        except Exception as e:
-            print(f"Error checking replication status: {e}")
-            break
-
-        if not replication_complete:
-            tries += 1
-            await asyncio.sleep(2)
-
-    if replication_complete:
-        upload_status.set_tebi_status(3)  # replication completed
-        publish_data = await publish(url, file_name, upload_status)
-        response['vps'] = publish_data['responses']
-        response['ok'] = publish_data['ok']
-        response['failed'] = publish_data['failed']
-        response['tebi_servers'] = replication_status
-        get_bucket().delete_objects(Delete={'Objects': [{'Key': file_name}]})
+    main_host_url = current_app.config['MAIN_HOST_URL']
+    if current_app.config['DEBUG']:
+        return {'sse_stream_url': f'/stream?channel={channel_uuid}'}
     else:
-        current_app.logger.error(f'Couldn\'t replicate file. Replication status: {replication_status}')
-        return {'error': f'Couldn\'t replicate file. Replication status: {replication_status}'}, 500
-
-    return response
+        return {'sse_stream_url': f'{main_host_url}/stream?channel={channel_uuid}'}
 
 
 @bp.route(api_upload_tebi_endpoint, methods=['POST'])

@@ -2,8 +2,7 @@ services:
     web:
         restart: always
         build: ./web
-        # command: flask run --host 0.0.0.0
-        command: gunicorn -k gevent -w 4 -b 0.0.0.0:5000 'app:create_app()'
+        command: gunicorn -k gevent -w 4 -b 0.0.0.0:5000 'app:create_app()' --reload
         ports:
             - 5000:5000
         env_file:
@@ -45,6 +44,19 @@ services:
         image: redis:alpine
         networks:
             - backend_network
+    celery:
+        restart: always
+        build: ./web
+        command: celery -A make_celery worker -l info
+        volumes:
+            - ./web/:/usr/src/web/
+        env_file:
+            - ./.env.dev
+        networks:
+            - backend_network
+        depends_on:
+            - web
+            - redis
 
 volumes:
     db_data:

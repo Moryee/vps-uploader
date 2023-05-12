@@ -1,4 +1,5 @@
 import os
+import json
 
 
 def convert_to_bool(value) -> bool:
@@ -10,6 +11,14 @@ def convert_to_bool(value) -> bool:
         return False
     else:
         raise ValueError(f'Cannot convert {value} to bool')
+
+
+def get_key_from_value(my_dict, val):
+    for key, value in my_dict.items():
+        if val == value:
+            return key
+
+    raise ValueError('value doesn\'t exist')
 
 
 class Config:
@@ -33,8 +42,16 @@ class Config:
     if MAIN_HOST:
         MAIN_HOST_URL = os.environ.get('MAIN_HOST_URL')
         HOSTS_URLS = os.environ.get('HOSTS_URLS').split(',') if os.environ.get('HOSTS_URLS') else []
+        VPS_URLS = json.loads(os.environ.get('VPS_URLS'))
+        del VPS_URLS[get_key_from_value(VPS_URLS, MAIN_HOST_URL)]
 
         REDIS_URL = os.environ.get('REDIS_URL')
+
+        CELERY = {
+            'broker_url': REDIS_URL,
+            'result_backend': REDIS_URL,
+            'task_ignore_result': True,
+        }
 
         # Database
 
