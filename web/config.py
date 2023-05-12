@@ -43,7 +43,7 @@ class Config:
         MAIN_HOST_URL = os.environ.get('MAIN_HOST_URL')
         HOSTS_URLS = os.environ.get('HOSTS_URLS').split(',') if os.environ.get('HOSTS_URLS') else []
         VPS_URLS = json.loads(os.environ.get('VPS_URLS'))
-        del VPS_URLS[get_key_from_value(VPS_URLS, MAIN_HOST_URL)]
+        # del VPS_URLS[get_key_from_value(VPS_URLS, MAIN_HOST_URL)]
 
         REDIS_URL = os.environ.get('REDIS_URL')
 

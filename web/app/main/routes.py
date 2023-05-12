@@ -94,6 +94,7 @@ class UploadStatus:
             }
 
         self._finished = False
+        self._error_message = None
 
     @property
     def file_ip(self):
@@ -208,7 +209,14 @@ class UploadStatus:
     def get_status(self):
         output = {}
 
-        output['file_ip'] = self._file_ip
+        output['finished'] = self._finished
+
+        if self._error_message is not None:
+            output['error'] = self._error_messag
+            return output
+
+        if self._file_ip is not None:
+            output['file_ip'] = self._file_ip
 
         if self._file_size is not None:
             output['file_size'] = self._file_size
@@ -222,7 +230,6 @@ class UploadStatus:
         output['ok'] = self._ok
         output['failed'] = self._failed
         output['vps'] = self._vps
-        output['finished'] = self._finished
 
         return output
 
@@ -232,6 +239,11 @@ class UploadStatus:
 
     def finished(self):
         self._finished = True
+        self._make_announcement()
+
+    def finished_with_exception(self, error_message):
+        self._finished = True
+        self._error_message = error_message
         self._make_announcement()
 
 
@@ -246,12 +258,20 @@ async def upload_url(url, channel_uuid):
     upload_status = UploadStatus(channel_uuid)
     upload_status.tebi_status = 0  # waiting
 
-    file_name, file_size = await replicate_url(url, upload_status)
+    try:
+        file_name, file_size = await replicate_url(url, upload_status)
+    except Exception as e:
+        current_app.logger.error(e)
+        upload_status.finished_with_exception('error while replicating url')
 
     upload_status.file_size = file_size
     upload_status.file_ip = file_ip
 
-    await publish(url, file_name, upload_status)
+    try:
+        await publish(url, file_name, upload_status)
+    except Exception as e:
+        current_app.logger.error(e)
+        upload_status.finished_with_exception('error while uploading file to vps')
 
 
 async def replicate_url(url, upload_status: UploadStatus):
@@ -354,12 +374,21 @@ async def publish(url, file_name, upload_status: UploadStatus):
         for vps_name, vps_url in vps_urls.items():
             tasks = []
 
-            tasks.append(asyncio.create_task(make_post(session, vps_name, vps_url, api_upload_tebi_endpoint, {'file_name': file_name}, 'tebi')))
-            tasks.append(asyncio.create_task(make_post(session, vps_name, vps_url, api_upload_url_endpoint, {'url': url}, 'object')))
+            try:
+                tasks.append(asyncio.create_task(make_post(session, vps_name, vps_url, api_upload_tebi_endpoint, {'file_name': file_name}, 'tebi')))
+            except Exception as e:
+                current_app.logger.error(e)
+                upload_status.vps_failed_status(vps_name, 'tebi')
+
+            try:
+                tasks.append(asyncio.create_task(make_post(session, vps_name, vps_url, api_upload_url_endpoint, {'url': url}, 'object')))
+            except Exception as e:
+                current_app.logger.error(e)
+                upload_status.vps_failed_status(vps_name, 'object')
 
             await asyncio.gather(*tasks)
 
-    upload_status.finished()
+        upload_status.finished()
 
 
 async def upload_file(file, file_name):
