@@ -76,10 +76,16 @@
       const source = new EventSource(listen_url);
       const startTime = performance.now();
 
+      function closeSource(source) {
+        source.close();
+        form_submit_btn.disabled = false;
+      }
+
       source.addEventListener('message', event => {
         const data = JSON.parse(event.data)
         console.log(data);
 
+        result_upload.innerHTML = 'Upload status:<br>' + JSON.stringify(data, null, 2);
         if (data.finished) {
           const endTime = performance.now();
 
@@ -87,16 +93,12 @@
 
           result_execution_speed.innerHTML = `Time to response:<br>TTFB: ${ttfb_client.toFixed(2)} s`;
 
-          form_submit_btn.disabled = false;
-          source.close();
-        } else {
-          result_upload.innerHTML = 'Upload status:<br>' + JSON.stringify(data, null, 2);
+          closeSource(source)
         }
       });
 
       source.addEventListener('error', error => {
-        form_submit_btn.disabled = false;
-        source.close();
+        closeSource(source)
         console.error(error);
       });
     }

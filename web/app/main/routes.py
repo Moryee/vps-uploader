@@ -34,9 +34,13 @@ class UploadStatus:
     '''
     status structure:
         {
-            "size": float kb,
+            "file_size": float kb,
+            "file_ip": str,
             "tebi_status": int,
             "tebi_servers": "DE:1,USE:1,USW:2,SGP:1",
+            "ok": int,
+            "failed": int,
+            "finished": bool,
             "vps": {
                 "vps_name_1": {
                     "ip": "10.10.10.10",
@@ -212,7 +216,7 @@ class UploadStatus:
         output['finished'] = self._finished
 
         if self._error_message is not None:
-            output['error'] = self._error_messag
+            output['error'] = self._error_message
             return output
 
         if self._file_ip is not None:
@@ -305,7 +309,7 @@ async def replicate_url(url, upload_status: UploadStatus):
                 os.unlink(temp.name)
 
             with tempfile.NamedTemporaryFile(delete=False) as new_temp_file:
-                file_size = downloaded_size / (1024 ** 2)
+                file_size = downloaded_size / 1024
                 new_temp_file.truncate(downloaded_size)
 
                 with open(new_temp_file.name, 'rb') as f:
@@ -388,7 +392,8 @@ async def publish(url, file_name, upload_status: UploadStatus):
 
             await asyncio.gather(*tasks)
 
-        upload_status.finished()
+        for i in range(3):
+            upload_status.finished()
 
 
 async def upload_file(file, file_name):
@@ -468,13 +473,6 @@ def after_request(response):
 # Routes
 
 
-@bp.route('/start-test', methods=['GET'])
-async def start_test():
-    from app.main.tasks import test_download_speed
-    await test_download_speed()
-    return {}, 200
-
-
 @bp.route('/')
 async def index():
     if not current_app.config['MAIN_HOST']:
@@ -497,7 +495,6 @@ async def api_upload_url_test():
     '''
     request example:
     {
-        "uuid": 'uuid',
         "url": "http://kyi.download.datapacket.com/10mb.bin",
     }
     '''
