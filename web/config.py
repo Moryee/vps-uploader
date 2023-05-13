@@ -13,14 +13,6 @@ def convert_to_bool(value) -> bool:
         raise ValueError(f'Cannot convert {value} to bool')
 
 
-def get_key_from_value(my_dict, val):
-    for key, value in my_dict.items():
-        if val == value:
-            return key
-
-    raise ValueError('value doesn\'t exist')
-
-
 class Config:
     BASE_DIR = os.path.abspath(os.path.dirname(__file__))
     LOGS_DIR = os.path.join(BASE_DIR, 'logs')
@@ -43,7 +35,6 @@ class Config:
         MAIN_HOST_URL = os.environ.get('MAIN_HOST_URL')
         HOSTS_URLS = os.environ.get('HOSTS_URLS').split(',') if os.environ.get('HOSTS_URLS') else []
         VPS_URLS = json.loads(os.environ.get('VPS_URLS'))
-        # del VPS_URLS[get_key_from_value(VPS_URLS, MAIN_HOST_URL)]
 
         REDIS_URL = os.environ.get('REDIS_URL')
 
