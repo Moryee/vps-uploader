@@ -375,24 +375,23 @@ async def publish(url, file_name, upload_status: UploadStatus, speed):
                 current_app.logger.error(f'Couldn\'t publish to host \'{vps_url}{endpoint}\'. Response: {resp.status} {resp.reason}')
                 upload_status.vps_failed_status(vps_name, storage_type)
                 return
-            resp_dict: dict = await resp.json()
 
             end_time = time.monotonic()
 
             ttfb_client = end_time - start_time
             ttfb_server = float(resp.headers['x-ttfb'])
 
-            ttfb = round(ttfb_client, 2)
-            latency = round(ttfb_client - ttfb_server, 2)
+            ttfb = round(ttfb_client, 2) * 1000
+            latency = round(ttfb_client - ttfb_server, 2) * 1000
 
+            resp_dict: dict = await resp.json()
             current_app.logger.info(resp_dict)
-
             upload_status.vps_complete_status(
                 vps_name=vps_name,
                 storage=storage_type,
-                latency=latency * 1000,
+                latency=latency,
                 ttfb=ttfb,
-                time=(end_time - start_time) * 1000,
+                time=ttfb_server * 1000,
                 ip=resp_dict.get('file_ip')
             )
 
@@ -412,8 +411,7 @@ async def publish(url, file_name, upload_status: UploadStatus, speed):
                 current_app.logger.error(e)
                 upload_status.vps_failed_status(vps_name, 'tebi')
 
-        for i in range(3):
-            upload_status.finished()
+        upload_status.finished()
 
 
 async def upload_file(file, file_name):
