@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request, make_response
 from config import Config
 from flask_cors import CORS
 import logging
@@ -7,6 +7,8 @@ import os
 from .extensions import scheduler, db
 from flask_sse import sse
 from celery import Celery, Task
+from app.models.test import Test
+from sqlalchemy.exc import DataError
 
 
 def celery_init_app(app: Flask) -> Celery:
@@ -81,7 +83,7 @@ def create_app(config_class=Config):
         dictConfig(logger_config)
 
     CORS(app)
-    cors = CORS(app, resources={r"/api/*": {"origins": "*"}})
+    cors = CORS(app, resources={r"/api/*": {"origins": "*"}, r"/stream/*": {"origins": "*"}})
 
     # Flask extensions
     if app.config['MAIN_HOST']:
@@ -94,6 +96,16 @@ def create_app(config_class=Config):
         scheduler.start()
 
         # sse
+        @sse.before_request
+        def after_done_access():
+            try:
+                test = Test.query.filter_by(id=request.args.get("channel")).first()
+                if test:
+                    response = make_response(f'data: {test.content}\n\n')
+                    response.headers['Content-Type'] = 'text/event-stream'
+                    return response
+            except DataError:
+                pass
         app.register_blueprint(sse, url_prefix='/stream')
 
         # celery

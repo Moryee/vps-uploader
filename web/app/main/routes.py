@@ -7,15 +7,16 @@ import time
 import asyncio
 import boto3
 from app.models.test import Test
+from app.models.monopoly import MonopolyMode
 from tldextract import extract
 import socket
 from flask_sse import sse
 import uuid
 from celery import shared_task
+from app.extensions import db
 
 
 CHUNK_SIZE = 1024 * 1024 * 1
-DOWNLOADING_SPEED = 100 * 1024 * 1024 / 8
 
 
 api_upload_url_test_endpoint = '/api/upload-url-test'
@@ -35,7 +36,6 @@ class UploadStatus:
     status structure:
         {
             "file_size": float kb,
-            "file_ip": str,
             "tebi_status": int,
             "tebi_servers": "DE:1,USE:1,USW:2,SGP:1",
             "ok": int,
@@ -45,14 +45,14 @@ class UploadStatus:
                 "vps_name_1": {
                     "ip": "10.10.10.10",
                     "tebi": {
-                        "ip": "100.100.100.100",
+                        "ip": str,
                         "status": "1",
                         "latency": "10.234",
                         "ttfb": "123.456",
                         "time": "1234.765"
                     },
                     "object": {
-                        "ip": "100.100.100.100",
+                        "ip": str,
                         "status": "2",
                         "latency": "12.543",
                         "ttfb": "123.654",
@@ -77,7 +77,6 @@ class UploadStatus:
     def __init__(self, uuid) -> None:
         self._uuid = str(uuid)
 
-        self._file_ip = None
         self._file_size = None
         self._tebi_status = None
         self._tebi_servers = None
@@ -101,12 +100,8 @@ class UploadStatus:
         self._error_message = None
 
     @property
-    def file_ip(self):
-        return self._file_ip
-
-    @file_ip.setter
-    def file_ip(self, value):
-        self._file_ip = value
+    def uuid(self):
+        return self._uuid
 
     @property
     def file_size(self):
@@ -178,7 +173,7 @@ class UploadStatus:
 
         self._make_announcement()
 
-    def vps_complete_status(self, vps_name: str, storage: str, latency: float, ttfb: float, time: float):
+    def vps_complete_status(self, vps_name: str, storage: str, latency: float, ttfb: float, time: float, ip: str):
         if storage not in ['tebi', 'object']:
             raise ValueError('storage must be either \'tebi\' or \'object\'')
 
@@ -190,7 +185,8 @@ class UploadStatus:
             'latency': latency,
             'ttfb': ttfb,
             'time': time,
-            'ok': True
+            'ok': True,
+            'ip': ip
         }
 
         self.ok += 1
@@ -218,9 +214,6 @@ class UploadStatus:
         if self._error_message is not None:
             output['error'] = self._error_message
             return output
-
-        if self._file_ip is not None:
-            output['file_ip'] = self._file_ip
 
         if self._file_size is not None:
             output['file_size'] = self._file_size
@@ -252,30 +245,50 @@ class UploadStatus:
 
 
 @shared_task(ignore_result=False)
-def upload_url_task(url, channel_uuid):
-    asyncio.run(upload_url(url, channel_uuid))
+def upload_url_task(url, channel_uuid, speed, monopoly):
+    asyncio.run(upload_url(
+        url=url,
+        channel_uuid=channel_uuid,
+        speed=speed,
+        monopoly=monopoly
+    ))
 
 
-async def upload_url(url, channel_uuid):
-    file_ip = get_ip_from_url(url)
-
-    upload_status = UploadStatus(channel_uuid)
-    upload_status.tebi_status = 0  # waiting
-
+async def upload_url(url, channel_uuid, speed, monopoly):
     try:
-        file_name, file_size = await replicate_url(url, upload_status)
-    except Exception as e:
-        current_app.logger.error(e)
-        upload_status.finished_with_exception('error while replicating url')
+        start_time = time.monotonic()
 
-    upload_status.file_size = file_size
-    upload_status.file_ip = file_ip
+        upload_status = UploadStatus(channel_uuid)
+        upload_status.tebi_status = 0  # waiting
 
-    try:
-        await publish(url, file_name, upload_status)
+        try:
+            file_name, file_size = await replicate_url(url, upload_status)
+            upload_status.file_size = file_size
+        except Exception as e:
+            current_app.logger.error(e)
+            upload_status.finished_with_exception('error while replicating url')
+
+        try:
+            await publish(url, file_name, upload_status, speed)
+        except Exception as e:
+            current_app.logger.error(e)
+            upload_status.finished_with_exception('error while uploading file to vps')
+
+        end_time = time.monotonic()
+
+        test = Test(
+            id=upload_status.uuid,
+            content=upload_status.get_status(),
+            url=url,
+            execution_time=round((end_time - start_time) * 1000, 3)
+        )
+        db.session.add(test)
+        db.session.commit()
     except Exception as e:
-        current_app.logger.error(e)
-        upload_status.finished_with_exception('error while uploading file to vps')
+        raise e
+    finally:
+        monopoly_model: MonopolyMode = MonopolyMode.get()
+        monopoly_model.end_mode(monopoly)
 
 
 async def replicate_url(url, upload_status: UploadStatus):
@@ -348,7 +361,7 @@ async def replicate_url(url, upload_status: UploadStatus):
     return file_name, file_size
 
 
-async def publish(url, file_name, upload_status: UploadStatus):
+async def publish(url, file_name, upload_status: UploadStatus, speed):
     vps_urls: dict = current_app.config['VPS_URLS'].copy()
 
     async def make_post(session, vps_name, vps_url, endpoint, json, storage_type) -> tuple[ClientResponse, dict]:
@@ -362,6 +375,7 @@ async def publish(url, file_name, upload_status: UploadStatus):
                 current_app.logger.error(f'Couldn\'t publish to host \'{vps_url}{endpoint}\'. Response: {resp.status} {resp.reason}')
                 upload_status.vps_failed_status(vps_name, storage_type)
                 return
+            resp_dict: dict = await resp.json()
 
             end_time = time.monotonic()
 
@@ -371,19 +385,29 @@ async def publish(url, file_name, upload_status: UploadStatus):
             ttfb = round(ttfb_client, 2)
             latency = round(ttfb_client - ttfb_server, 2)
 
+            current_app.logger.info(resp_dict)
+
+            upload_status.vps_complete_status(
+                vps_name=vps_name,
+                storage=storage_type,
+                latency=latency * 1000,
+                ttfb=ttfb,
+                time=(end_time - start_time) * 1000,
+                ip=resp_dict.get('file_ip')
+            )
+
             current_app.logger.info(f'{vps_name}, {storage_type}, done')
-            upload_status.vps_complete_status(vps_name, storage_type, latency * 1000, ttfb, (end_time - start_time) * 1000)
 
     async with ClientSession() as session:
         for vps_name, vps_url in vps_urls.items():
             try:
-                await make_post(session, vps_name, vps_url, api_upload_url_endpoint, {'url': url}, 'object')
+                await make_post(session, vps_name, vps_url, api_upload_url_endpoint, {'url': url, 'speed': speed}, 'object')
             except Exception as e:
                 current_app.logger.error(e)
                 upload_status.vps_failed_status(vps_name, 'object')
 
             try:
-                await make_post(session, vps_name, vps_url, api_upload_tebi_endpoint, {'file_name': file_name}, 'tebi')
+                await make_post(session, vps_name, vps_url, api_upload_tebi_endpoint, {'file_name': file_name, 'speed': speed}, 'tebi')
             except Exception as e:
                 current_app.logger.error(e)
                 upload_status.vps_failed_status(vps_name, 'tebi')
@@ -402,7 +426,7 @@ async def upload_file(file, file_name):
         os.unlink(temp.name)
 
 
-async def upload_file_by_chunks(stream: ClientResponse, file_name):
+async def upload_file_by_chunks(stream: ClientResponse, downloading_speed):
     with tempfile.NamedTemporaryFile(delete=False) as temp:
         start_time = time.monotonic()
         while True:
@@ -411,7 +435,7 @@ async def upload_file_by_chunks(stream: ClientResponse, file_name):
                 break
             temp.write(chunk)
             time_elapsed = time.monotonic() - start_time
-            expected_time = len(chunk) / DOWNLOADING_SPEED - time_elapsed
+            expected_time = len(chunk) / calculate_downloading_speed(downloading_speed) - time_elapsed
             if expected_time > 0:
                 time.sleep(expected_time)
         temp.seek(0)
@@ -454,6 +478,10 @@ def get_bucket():
     ).Bucket(current_app.config['TEBI_BUCKET'])
 
 
+def calculate_downloading_speed(speed):
+    return speed * 1024 * 1024 / 8
+
+
 @bp.before_request
 def before_request():
     request.start_time = time.time()
@@ -491,34 +519,71 @@ async def api_upload_url_test():
     '''
     request example:
     {
+        "speed": int mb/s (default 100),
         "url": "http://kyi.download.datapacket.com/10mb.bin",
+        "monopoly": bool (default false)
     }
     '''
     if not current_app.config['MAIN_HOST']:
         return make_response({'error': 'This is not main server'}, 400)
 
     url = request.json.get('url')
-    channel_uuid = str(uuid.uuid4())
 
     if not url:
         return make_response({'error': 'No url provided'}, 400)
 
-    upload_url_task.delay(url, channel_uuid)
+    try:
+        speed = int(request.json.get('speed', 100))
+    except ValueError:
+        return make_response({'error': 'Speed must be integer'}, 400)
+    monopoly = request.json.get('monopoly', False)
+    monopoly_model: MonopolyMode = MonopolyMode.get()
 
-    main_host_url = current_app.config['MAIN_HOST_URL']
-    if current_app.config['DEBUG']:
-        return {'sse_stream_url': f'/stream?channel={channel_uuid}'}
-    else:
-        return {'sse_stream_url': f'{main_host_url}/stream?channel={channel_uuid}'}
+    current_app.logger.info(f'Upload url test, url: {url}, speed: {speed}, monopoly: {monopoly}')
+
+    if monopoly_model.lock:
+        return make_response({'error': 'Monopoly test is currently running'}, 400)
+
+    monopoly_model.start_mode(monopoly)
+
+    try:
+        channel_uuid = str(uuid.uuid4())
+
+        upload_url_task.delay(
+            url=url,
+            channel_uuid=channel_uuid,
+            speed=speed,
+            monopoly=monopoly
+        )
+
+        main_host_url = current_app.config['MAIN_HOST_URL']
+        if current_app.config['DEBUG']:
+            return {'sse_stream_url': f'/stream?channel={channel_uuid}'}
+        else:
+            return {'sse_stream_url': f'{main_host_url}/stream?channel={channel_uuid}'}
+    except Exception as e:
+        monopoly_model.end_mode(monopoly)
+        raise e
 
 
 @bp.route(api_upload_tebi_endpoint, methods=['POST'])
 async def api_upload_tebi():
     '''
-    request example: {'file_name': 'file_name.bin'}
+    request example:
+    {
+        'file_name': 'file_name.bin',
+        'speed': int mb/s
+    }
     '''
 
     file_name = request.json.get('file_name')
+    try:
+        speed = int(request.json.get('speed', 100))
+    except ValueError:
+        return make_response({'error': 'Speed must be integer'}, 400)
+
+    if not file_name:
+        return make_response({'error': 'No file_name provided'}, 400)
 
     x1 = time.monotonic()
     with tempfile.NamedTemporaryFile(delete=False) as temp:
@@ -534,7 +599,7 @@ async def api_upload_tebi():
             temp.write(chunk)
             bytes_read += len(chunk)
             time_elapsed = time.monotonic() - start_time
-            expected_time = (bytes_read / file_size) * file_size / DOWNLOADING_SPEED - time_elapsed
+            expected_time = (bytes_read / file_size) * file_size / calculate_downloading_speed(speed) - time_elapsed
             if expected_time > 0:
                 time.sleep(expected_time)
 
@@ -544,26 +609,38 @@ async def api_upload_tebi():
     return {
         'vps_name': current_app.config['HOST_NAME'],
         'download_time': format_download_time(time.monotonic() - x1),
+        'file_ip': tebi_get_client().head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name).get('ResponseMetadata', {}).get('HostId', {})
     }
 
 
 @bp.route(api_upload_url_endpoint, methods=['POST'])
 async def api_upload_url():
     '''
-    request example: {'url': 'http://kyi.download.datapacket.com/10mb.bin'}
+    request example:
+    {
+        'url': 'http://kyi.download.datapacket.com/10mb.bin',
+        'speed': int mb/s,
+    }
     '''
 
     url = request.json.get('url')
-    file_name = url.split('/')[-1]
+    try:
+        speed = int(request.json.get('speed', 100))
+    except ValueError:
+        return make_response({'error': 'Speed must be integer'}, 400)
+
+    if not url:
+        return make_response({'error': 'No url provided'}, 400)
 
     async with ClientSession() as session:
         x1 = time.monotonic()
         async with session.get(url) as resp:
             if resp.ok:
-                await upload_file_by_chunks(resp, file_name)
+                await upload_file_by_chunks(resp, speed)
                 return {
                     'vps_name': current_app.config['HOST_NAME'],
                     'download_time': format_download_time(time.monotonic() - x1),
+                    'file_ip': get_ip_from_url(url)
                 }
             else:
                 current_app.logger.error(f'Couldn\'t upload file by url \'{url}\'. Response: {resp}')
