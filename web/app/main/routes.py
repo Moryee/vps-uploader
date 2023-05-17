@@ -261,18 +261,21 @@ async def upload_url(url, channel_uuid, speed, monopoly):
         upload_status = UploadStatus(channel_uuid)
         upload_status.tebi_status = 0  # waiting
 
-        try:
-            file_name, file_size = await replicate_url(url, upload_status)
-            upload_status.file_size = file_size
-        except Exception as e:
-            current_app.logger.error(e)
-            upload_status.finished_with_exception('error while replicating url')
+        upload_object_task = asyncio.create_task(publish(api_upload_url_endpoint, {'url': url, 'speed': speed}, 'object', upload_status))
+
+        file_name, file_size = await replicate_url(url, upload_status)
+
+        upload_status.file_size = file_size
 
         try:
-            await publish(url, file_name, upload_status, speed)
+            await publish(api_upload_tebi_endpoint, {'file_name': file_name, 'speed': speed}, 'tebi', upload_status)
+            get_bucket().delete_objects(Delete={'Objects': [{'Key': file_name}]})
+            await asyncio.gather(upload_object_task)
         except Exception as e:
             current_app.logger.error(e)
             upload_status.finished_with_exception('error while uploading file to vps')
+
+        upload_status.finished()
 
         end_time = time.monotonic()
 
@@ -361,7 +364,7 @@ async def replicate_url(url, upload_status: UploadStatus):
     return file_name, file_size
 
 
-async def publish(url, file_name, upload_status: UploadStatus, speed):
+async def publish(upload_endpoint, json_data, storage_type, upload_status: UploadStatus):
     vps_urls: dict = current_app.config['VPS_URLS'].copy()
 
     async def make_post(session, vps_name, vps_url, endpoint, json, storage_type) -> tuple[ClientResponse, dict]:
@@ -392,18 +395,10 @@ async def publish(url, file_name, upload_status: UploadStatus, speed):
     async with ClientSession() as session:
         for vps_name, vps_url in vps_urls.items():
             try:
-                await make_post(session, vps_name, vps_url, api_upload_url_endpoint, {'url': url, 'speed': speed}, 'object')
+                await make_post(session, vps_name, vps_url, upload_endpoint, json_data, storage_type)
             except Exception as e:
                 current_app.logger.error(e)
-                upload_status.vps_failed_status(vps_name, 'object')
-
-            try:
-                await make_post(session, vps_name, vps_url, api_upload_tebi_endpoint, {'file_name': file_name, 'speed': speed}, 'tebi')
-            except Exception as e:
-                current_app.logger.error(e)
-                upload_status.vps_failed_status(vps_name, 'tebi')
-
-        upload_status.finished()
+                upload_status.vps_failed_status(vps_name, storage_type)
 
 
 async def upload_file(file, file_name):
