@@ -1,6 +1,7 @@
 from app.extensions import db
 import time
 from flask import current_app
+from sqlalchemy.exc import SQLAlchemyError
 
 
 class MonopolyMode(db.Model):
@@ -19,8 +20,13 @@ class MonopolyMode(db.Model):
             return monopoly
 
     def update_lock(self, lock: bool):
-        self.lock = lock
-        db.session.commit()
+        try:
+            db.session.begin_nested()
+            self.lock = lock
+            db.session.commit()
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            raise e
 
     def update_active_tests(self, increment: int):
         self.active_tests += increment

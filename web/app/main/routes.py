@@ -296,7 +296,7 @@ async def replicate_url(url, upload_status: UploadStatus):
     returns tuple `file_name`, `file_size`
     '''
 
-    correct_replication_status = 'DE:1,SGP:1,USE:2,USW:1'
+    correct_replication_status = 'DE:2,SGP:1,USE:2,USW:2'
     file_name: str = time.strftime('%Y-%m-%d_%H-%M-%S_') + url.split('/')[-1]
     file_size = 0
 
@@ -366,7 +366,6 @@ async def publish(url, file_name, upload_status: UploadStatus, speed):
 
     async def make_post(session, vps_name, vps_url, endpoint, json, storage_type) -> tuple[ClientResponse, dict]:
         current_app.logger.info(f'{vps_name}, {storage_type}, starting')
-        start_time = time.monotonic()
         upload_status.vps_update_status(vps_name, storage_type, 1)
 
         resp: ClientResponse
@@ -376,23 +375,16 @@ async def publish(url, file_name, upload_status: UploadStatus, speed):
                 upload_status.vps_failed_status(vps_name, storage_type)
                 return
 
-            end_time = time.monotonic()
-
-            ttfb_client = end_time - start_time
-            ttfb_server = float(resp.headers['x-ttfb'])
-
-            ttfb = round(ttfb_client, 2) * 1000
-            latency = round(ttfb_client - ttfb_server, 2) * 1000
-
             resp_dict: dict = await resp.json()
+
             current_app.logger.info(resp_dict)
             upload_status.vps_complete_status(
                 vps_name=vps_name,
                 storage=storage_type,
-                latency=latency,
-                ttfb=ttfb,
-                time=ttfb_server * 1000,
-                ip=resp_dict.get('file_ip')
+                ip=resp_dict.get('file_ip'),
+                time=float(resp_dict.get('time')),  # +
+                ttfb=float(resp_dict.get('ttfb')),  # +
+                latency=float(resp_dict.get('latency')),  # +
             )
 
             current_app.logger.info(f'{vps_name}, {storage_type}, done')
@@ -454,7 +446,7 @@ def get_ip_from_url(url):
     return socket.gethostbyname(subdomain + '.' + ext.domain + '.' + ext.suffix)
 
 
-def format_download_time(seconds):
+def format_download_time(seconds: float):
     return round(seconds * 1000, 3)
 
 
@@ -583,12 +575,17 @@ async def api_upload_tebi():
     if not file_name:
         return make_response({'error': 'No file_name provided'}, 400)
 
-    x1 = time.monotonic()
+    head_start_time = time.monotonic()
+    tebi_headers = tebi_get_client().head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
+    latency = time.monotonic() - head_start_time
+
+    start_time = time.monotonic()
     with tempfile.NamedTemporaryFile(delete=False) as temp:
-        start_time = time.monotonic()
+        start_time_speed = time.monotonic()
         file_size = get_bucket().Object(file_name).content_length
         bytes_read = 0
         body = get_bucket().Object(file_name).get()['Body']
+        ttfb = time.monotonic() - start_time
 
         while True:
             chunk = body.read(CHUNK_SIZE)
@@ -596,7 +593,7 @@ async def api_upload_tebi():
                 break
             temp.write(chunk)
             bytes_read += len(chunk)
-            time_elapsed = time.monotonic() - start_time
+            time_elapsed = time.monotonic() - start_time_speed
             expected_time = (bytes_read / file_size) * file_size / calculate_downloading_speed(speed) - time_elapsed
             if expected_time > 0:
                 time.sleep(expected_time)
@@ -606,8 +603,10 @@ async def api_upload_tebi():
 
     return {
         'vps_name': current_app.config['HOST_NAME'],
-        'download_time': format_download_time(time.monotonic() - x1),
-        'file_ip': tebi_get_client().head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name).get('ResponseMetadata', {}).get('HostId', {})
+        'file_ip': tebi_headers.get('ResponseMetadata', {}).get('HostId', {}),
+        'time': format_download_time(time.monotonic() - start_time),
+        'ttfb': format_download_time(ttfb),
+        'latency': format_download_time(latency),
     }
 
 
@@ -631,14 +630,17 @@ async def api_upload_url():
         return make_response({'error': 'No url provided'}, 400)
 
     async with ClientSession() as session:
-        x1 = time.monotonic()
+        start_time = time.monotonic()
         async with session.get(url) as resp:
             if resp.ok:
+                ttfb = time.monotonic() - start_time
                 await upload_file_by_chunks(resp, speed)
                 return {
                     'vps_name': current_app.config['HOST_NAME'],
-                    'download_time': format_download_time(time.monotonic() - x1),
-                    'file_ip': get_ip_from_url(url)
+                    'file_ip': get_ip_from_url(url),
+                    'time': format_download_time(time.monotonic() - start_time),
+                    'ttfb': format_download_time(ttfb),
+                    'latency': format_download_time(ttfb / 2)
                 }
             else:
                 current_app.logger.error(f'Couldn\'t upload file by url \'{url}\'. Response: {resp}')
