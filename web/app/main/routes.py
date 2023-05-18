@@ -266,8 +266,6 @@ async def upload_url(url, channel_uuid, speed, monopoly, amount):
 
         file_name, file_size = await replicate_url(url, upload_status)
 
-        upload_status.file_size = file_size
-
         try:
             await asyncio.gather(upload_object_task)
             await publish(api_upload_tebi_endpoint, {'file_name': file_name, 'speed': speed, 'amount': amount}, 'tebi', upload_status)
@@ -310,8 +308,6 @@ async def replicate_url(url, upload_status: UploadStatus):
                 current_app.logger.error(f'Couldn\'t get file from \'{url}\'. Response: {resp}')
                 return {'error': f'Couldn\'t get file from \'{url}\'.'}, 400
 
-            upload_status.tebi_status = 1  # uploading file
-
             downloaded_size = 0
             with tempfile.NamedTemporaryFile(delete=False) as temp:
                 while True:
@@ -326,8 +322,11 @@ async def replicate_url(url, upload_status: UploadStatus):
                 os.unlink(temp.name)
 
             with tempfile.NamedTemporaryFile(delete=False) as new_temp_file:
-                file_size = downloaded_size / 1024
+                upload_status.file_size = downloaded_size / 1024
+
                 new_temp_file.truncate(downloaded_size)
+
+                upload_status.tebi_status = 1  # uploading file
 
                 with open(new_temp_file.name, 'rb') as f:
                     get_bucket().put_object(Key=file_name, Body=f)
@@ -591,13 +590,13 @@ async def api_upload_tebi():
 
     start_time = time.monotonic()
     with tempfile.NamedTemporaryFile(delete=False) as temp:
-        ttfb = time.monotonic() - start_time
 
         for i in range(amount):
             start_time_speed = time.monotonic()
+            body = get_bucket().Object(file_name).get()['Body']
+            ttfb = time.monotonic() - start_time
             file_size = get_bucket().Object(file_name).content_length
             bytes_read = 0
-            body = get_bucket().Object(file_name).get()['Body']
             while True:
                 chunk = body.read(CHUNK_SIZE)
                 if not chunk:
