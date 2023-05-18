@@ -3,38 +3,26 @@ from flask import current_app
 from app.extensions import db
 from app.models.test import Test
 from datetime import datetime, timedelta, timezone
-import aiohttp
+import uuid
 
 
-async def test_download_speed():
-    from app.main.routes import api_upload_url_test_endpoint
-
+@scheduler.task('cron', id='job_tests', hour='0,6,12,18', minute=0, misfire_grace_time=3600, timezone='Europe/Kiev')
+def job_tests():
     with scheduler.app.app_context():
+        current_app.logger.info('Starting job tests...')
+        from app.main.routes import upload_url_task
         if current_app.config['DEBUG']:
             url = 'http://kyi.download.datapacket.com/1mb.bin'
         else:
             url = 'http://kyi.download.datapacket.com/100mb.bin'
 
-        current_app.logger.info('Testing download speed...')
-        host = current_app.config['MAIN_HOST_URL']
-
-        async with aiohttp.ClientSession() as session:
-            response = await session.post(url=f'{host}{api_upload_url_test_endpoint}', json={'url': url, 'uuid': 'test'})
-
-        if response.ok:
-            db.create_all()
-            test = Test(content=await response.json(), url=url, execution_time=round(float(response.headers['X-TTFB']) * 1000, 3))
-            db.session.add(test)
-            db.session.commit()
-
-            current_app.logger.info(response.json())
-        else:
-            current_app.logger.error(f'Failed to test download speed. Response: {response}')
-
-
-@scheduler.task('cron', id='job_tests', hour='0,6,12,18', minute=0, misfire_grace_time=3600, timezone='Europe/Kiev')
-async def job_tests():
-    await test_download_speed()
+        upload_url_task.delay(
+            url=url,
+            channel_uuid=uuid.uuid4(),
+            speed=100,
+            monopoly=False,
+            amount=1
+        )
 
 
 @scheduler.task('cron', id='job_clean_tests', day='*', hour=0, minute=0, misfire_grace_time=3600, timezone='Europe/Kiev')
