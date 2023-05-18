@@ -525,6 +525,9 @@ async def api_upload_url_test():
 
     try:
         speed = int(request.json.get('speed', 100))
+
+        if speed < 1:
+            make_response({'error': 'Speed must be greater than 1'}, 400)
     except ValueError:
         return make_response({'error': 'Speed must be integer'}, 400)
     monopoly = request.json.get('monopoly', False)
@@ -581,11 +584,14 @@ async def api_upload_tebi():
 
     try:
         speed = int(request.json.get('speed', 100))
+
+        if speed < 1:
+            make_response({'error': 'Speed must be greater than 1'}, 400)
     except ValueError:
         return make_response({'error': 'Speed must be integer'}, 400)
 
     head_start_time = time.monotonic()
-    tebi_headers = tebi_get_client().head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
+    tebi_get_client().head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
     latency = time.monotonic() - head_start_time
 
     start_time = time.monotonic()
@@ -613,7 +619,7 @@ async def api_upload_tebi():
 
     return {
         'vps_name': current_app.config['HOST_NAME'],
-        'file_ip': tebi_headers.get('ResponseMetadata', {}).get('HostId', {}),
+        'file_ip': get_ip_from_url('https://s3.tebi.io'),
         'time': format_download_time(time.monotonic() - start_time),
         'ttfb': format_download_time(ttfb),
         'latency': format_download_time(latency / 2),
@@ -643,6 +649,9 @@ async def api_upload_url():
 
     try:
         speed = int(request.json.get('speed', 100))
+
+        if speed < 1:
+            make_response({'error': 'Speed must be greater than 1'}, 400)
     except ValueError:
         return make_response({'error': 'Speed must be integer'}, 400)
 
