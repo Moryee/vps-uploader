@@ -411,21 +411,29 @@ async def upload_file(file, file_name):
 async def upload_file_by_chunks(stream: ClientResponse, downloading_speed):
     with tempfile.NamedTemporaryFile(delete=False) as temp:
         start_time = time.monotonic()
+        total_bytes_downloaded = 0
+
         while True:
             chunk = await stream.content.read(CHUNK_SIZE)
             if not chunk:
                 break
             temp.write(chunk)
-            time_elapsed = time.monotonic() - start_time
-            expected_time = len(chunk) / calculate_downloading_speed(downloading_speed) - time_elapsed
-            if expected_time > 0:
-                time.sleep(expected_time)
+
+            total_bytes_downloaded += len(chunk)
+
+            elapsed_time = time.monotonic() - start_time
+            expected_time = total_bytes_downloaded / (downloading_speed * 1024 * 1024)
+            if elapsed_time < expected_time:
+                time.sleep(expected_time - elapsed_time)
         temp.seek(0)
 
         # here can be saving file
 
         temp.close()
         os.unlink(temp.name)
+
+    actual_download_speed = total_bytes_downloaded / (1024 * 1024 * elapsed_time)
+    current_app.logger.info(f'downloading speed object: {actual_download_speed}mbps')
 
 
 def get_ip_from_url(url):
@@ -591,28 +599,31 @@ async def api_upload_tebi():
     tebi_get_client().head_object(Bucket=current_app.config['TEBI_BUCKET'], Key=file_name)
     latency = time.monotonic() - head_start_time
 
-    start_time = time.monotonic()
     with tempfile.NamedTemporaryFile(delete=False) as temp:
+        start_time = time.monotonic()
+        total_bytes_downloaded = 0
 
         for i in range(amount):
-            start_time_speed = time.monotonic()
+            start_time = time.monotonic()
             body = get_bucket().Object(file_name).get()['Body']
             ttfb = time.monotonic() - start_time
-            file_size = get_bucket().Object(file_name).content_length
-            bytes_read = 0
+
             while True:
                 chunk = body.read(CHUNK_SIZE)
                 if not chunk:
                     break
                 temp.write(chunk)
-                bytes_read += len(chunk)
-                time_elapsed = time.monotonic() - start_time_speed
-                expected_time = (bytes_read / file_size) * file_size / calculate_downloading_speed(speed) - time_elapsed
-                if expected_time > 0:
-                    time.sleep(expected_time)
 
-        temp.close()
-        os.unlink(temp.name)
+                total_bytes_downloaded += len(chunk)
+
+                elapsed_time = time.monotonic() - start_time
+                expected_time = total_bytes_downloaded / (speed * 1024 * 1024)
+                if elapsed_time < expected_time:
+                    time.sleep(expected_time - elapsed_time)
+            temp.close()
+            os.unlink(temp.name)
+        actual_download_speed = total_bytes_downloaded / (1024 * 1024 * elapsed_time)
+        current_app.logger.info(f'downloading speed tebi: {actual_download_speed}mbps')
 
     return {
         'vps_name': current_app.config['HOST_NAME'],

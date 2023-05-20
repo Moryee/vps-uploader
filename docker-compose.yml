@@ -2,7 +2,7 @@ services:
     web:
         restart: always
         build: ./web
-        command: gunicorn -k gevent -w 4 -b 0.0.0.0:5000 'app:create_app()' --reload --preload
+        command: gunicorn -k gevent -w 4 -b 0.0.0.0:5000 'app:create_app()' --reload
         ports:
             - 5000:5000
         env_file:
