@@ -275,6 +275,7 @@ async def upload_url(url, channel_uuid, speed, monopoly, amount):
             upload_status.finished_with_exception('error while uploading file to vps')
 
         upload_status.finished()
+        current_app.logger.info(f'finished {upload_status.get_status()}')
 
         end_time = time.monotonic()
 
@@ -368,7 +369,6 @@ async def publish(upload_endpoint, json_data, storage_type, upload_status: Uploa
     vps_urls: dict = current_app.config['VPS_URLS'].copy()
 
     async def make_post(session, vps_name, vps_url, endpoint, json, storage_type) -> tuple[ClientResponse, dict]:
-        current_app.logger.info(f'{vps_name}, {storage_type}, starting')
         upload_status.vps_update_status(vps_name, storage_type, 1)
 
         resp: ClientResponse
@@ -380,17 +380,14 @@ async def publish(upload_endpoint, json_data, storage_type, upload_status: Uploa
 
             resp_dict: dict = await resp.json()
 
-            current_app.logger.info(resp_dict)
             upload_status.vps_complete_status(
                 vps_name=vps_name,
                 storage=storage_type,
                 ip=resp_dict.get('file_ip'),
-                time=float(resp_dict.get('time')),  # +
-                ttfb=float(resp_dict.get('ttfb')),  # +
-                latency=float(resp_dict.get('latency')),  # +
+                time=float(resp_dict.get('time')),
+                ttfb=float(resp_dict.get('ttfb')),
+                latency=float(resp_dict.get('latency')),
             )
-
-            current_app.logger.info(f'{vps_name}, {storage_type}, done')
 
     async with ClientSession() as session:
         for vps_name, vps_url in vps_urls.items():
@@ -662,7 +659,6 @@ async def api_upload_url():
                 ttfb = time.monotonic() - start_time
 
                 for i in range(amount):
-                    current_app.logger.info(f'iter {i}')
                     await upload_file_by_chunks(resp, speed)
                 return {
                     'vps_name': current_app.config['HOST_NAME'],

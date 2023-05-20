@@ -2,12 +2,19 @@ from app.extensions import db
 import time
 from flask import current_app
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import validates
 
 
 class MonopolyMode(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     active_tests = db.Column(db.Integer, default=0)
     lock = db.Column(db.Boolean, default=False)
+
+    @validates('active_tests')
+    def validate_age(self, key, value):
+        if value < 0:
+            return 0
+        return value
 
     @classmethod
     def get(cls):
