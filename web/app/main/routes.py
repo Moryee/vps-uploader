@@ -556,6 +556,9 @@ async def api_upload_url_test():
 
     if eta:
         eta_datetime = datetime.datetime.fromtimestamp(eta)
+
+        if eta_datetime < (datetime.datetime.now() + datetime.timedelta(seconds=15)):
+            make_response({'error': '\'eta\' datetime must be in future'})
     else:
         eta_datetime = None
 
