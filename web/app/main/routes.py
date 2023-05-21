@@ -261,7 +261,7 @@ async def upload_url(url, channel_uuid, speed, monopoly, amount, retries=0):
     monopoly_model: MonopolyMode = MonopolyMode.get()
     if not monopoly_model.start_mode(monopoly):
         retries += 1
-        max_retries = 1
+        max_retries = 20
         if retries == max_retries:
             current_app.logger.info('Couldn\'t wait for task execution')
             UploadStatus(channel_uuid).finished_with_exception('Couldn\'t wait for task execution. Max retries exceeded')
