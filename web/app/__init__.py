@@ -91,9 +91,9 @@ def create_app(config_class=Config):
         db.init_app(app)
 
         # scheduler
-        scheduler.init_app(app)
-        from .main import tasks
-        scheduler.start()
+        # scheduler.init_app(app)
+        # from .main import tasks
+        # scheduler.start()
 
         # sse
         @sse.before_request

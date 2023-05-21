@@ -14,6 +14,7 @@ from flask_sse import sse
 import uuid
 from celery import shared_task
 from app.extensions import db
+import datetime
 
 
 CHUNK_SIZE = 1024 * 1024 * 1
@@ -509,14 +510,17 @@ async def api_upload_url_test():
     '''
     request example:
     {
-        "speed": int mb/s (default 100),
         "url": "http://kyi.download.datapacket.com/10mb.bin",
-        "monopoly": bool (default false),
         "amount": int (default 1),
+        "speed": int mb/s (default 100),
+        "monopoly": bool (default false),
+        "eta": int (timestamp, utc, not required)
     }
     '''
     if not current_app.config['MAIN_HOST']:
         return make_response({'error': 'This is not main server'}, 400)
+
+    # amount & url
 
     amount = int(request.json.get('amount', 1))
     if amount >= 2 and amount <= 100:
@@ -526,19 +530,39 @@ async def api_upload_url_test():
         if not url:
             return make_response({'error': 'No url provided'}, 400)
     else:
-        return make_response({'error': 'amount must be greater than 0 and less than 100'}, 400)
+        return make_response({'error': '\'amount\' must be greater than 0 and less than 100'}, 400)
+
+    # speed
 
     try:
         speed = int(request.json.get('speed', 100))
 
         if speed < 1:
-            make_response({'error': 'Speed must be greater than 1'}, 400)
+            make_response({'error': '\'speed\' must be greater than 1'}, 400)
     except ValueError:
-        return make_response({'error': 'Speed must be integer'}, 400)
+        return make_response({'error': '\'speed\' must be integer'}, 400)
+
+    # monopoly
+
     monopoly = request.json.get('monopoly', False)
     monopoly_model: MonopolyMode = MonopolyMode.get()
 
-    current_app.logger.info(f'Upload url test, url: {url}, speed: {speed}, monopoly: {monopoly}')
+    # eta (estimated time of arrival)
+
+    try:
+        eta = int(request.json.get('eta', 0))
+    except ValueError:
+        return make_response({'error': '\'eta\' must be integer'})
+
+    if eta:
+        eta_datetime = datetime.datetime.fromtimestamp(eta)
+    else:
+        eta_datetime = None
+
+    if eta < 1:
+        make_response({'error': '\'eta\' must be greater than 1'})
+
+    current_app.logger.info(f'Upload url test, url: {url}, amount: {amount}, speed: {speed}, monopoly: {monopoly}, eta: {eta_datetime}')
 
     if monopoly_model.lock:
         return make_response({'error': 'Monopoly test is currently running'}, 400)
@@ -548,19 +572,27 @@ async def api_upload_url_test():
     try:
         channel_uuid = str(uuid.uuid4())
 
-        upload_url_task.delay(
-            url=url,
-            channel_uuid=channel_uuid,
-            speed=speed,
-            monopoly=monopoly,
-            amount=amount,
-        )
+        kwargs = {
+            'url': url,
+            'channel_uuid': channel_uuid,
+            'speed': speed,
+            'monopoly': monopoly,
+            'amount': amount
+        }
+        if not eta_datetime:
+            upload_url_task.delay(
+                **kwargs
+            )
+        else:
+            upload_url_task.apply_async(
+                kwargs=kwargs, eta=eta_datetime
+            )
 
         main_host_url = current_app.config['MAIN_HOST_URL']
         if current_app.config['DEBUG']:
-            return {'sse_stream_url': f'/stream?channel={channel_uuid}'}
+            return {'sse_stream_url': f'/stream?channel={channel_uuid}', 'uuid': channel_uuid}
         else:
-            return {'sse_stream_url': f'{main_host_url}/stream?channel={channel_uuid}'}
+            return {'sse_stream_url': f'{main_host_url}/stream?channel={channel_uuid}', 'uuid': channel_uuid}
     except Exception as e:
         monopoly_model.end_mode(monopoly)
         raise e

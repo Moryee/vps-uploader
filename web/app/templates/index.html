@@ -21,6 +21,8 @@
             <input type="checkbox" class="form-check-input" id="monopoly">
             <label class="form-check-label" for="monopoly">Monopoly mode</label>
           </div>
+          <input type="number" min="1" value="100" class="form-control mb-3" name="speed" required>
+          <input type="number" min="1" class="form-control mb-3" name="eta">
           <input class="btn btn-primary" type="submit" value="Send link">
         </form>
       </div>
@@ -56,10 +58,12 @@
 
       let url = form_upload_url.url.value;
       let monopoly = form_upload_url.monopoly.checked;
+      let speed = form_upload_url.speed.value;
+      let eta = form_upload_url.eta.value ? form_upload_url.eta.value : 0;
 
       const response = await fetch(upload_url, {
         method: "POST",
-        body: JSON.stringify({url: url, monopoly: monopoly}),
+        body: JSON.stringify({url: url, monopoly: monopoly, speed: speed, eta: eta}),
         headers: {
           'Content-Type': 'application/json'
         }
