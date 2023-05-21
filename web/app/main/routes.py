@@ -559,10 +559,7 @@ async def api_upload_url_test():
         return make_response({'error': '\'eta\' must be integer'})
 
     if eta:
-        eta_datetime = datetime.datetime.fromtimestamp(eta)
-
-        if eta_datetime < (datetime.datetime.now() + datetime.timedelta(seconds=15)):
-            make_response({'error': '\'eta\' datetime must be in future'})
+        eta_datetime = datetime.datetime.fromtimestamp(eta, tz=datetime.timezone.utc)
     else:
         eta_datetime = None
 
