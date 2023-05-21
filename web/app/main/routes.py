@@ -257,7 +257,10 @@ def upload_url_task(url, channel_uuid, speed, monopoly, amount):
 
 
 async def upload_url(url, channel_uuid, speed, monopoly, amount):
+    monopoly_model: MonopolyMode = MonopolyMode.get()
     try:
+        monopoly_model.start_mode(monopoly)
+
         start_time = time.monotonic()
 
         upload_status = UploadStatus(channel_uuid)
@@ -291,7 +294,6 @@ async def upload_url(url, channel_uuid, speed, monopoly, amount):
     except Exception as e:
         raise e
     finally:
-        monopoly_model: MonopolyMode = MonopolyMode.get()
         monopoly_model.end_mode(monopoly)
 
 
@@ -546,6 +548,8 @@ async def api_upload_url_test():
 
     monopoly = request.json.get('monopoly', False)
     monopoly_model: MonopolyMode = MonopolyMode.get()
+    if monopoly_model.lock:
+        return make_response({'error': 'Monopoly test is currently running'}, 400)
 
     # eta (estimated time of arrival)
 
@@ -567,38 +571,29 @@ async def api_upload_url_test():
 
     current_app.logger.info(f'Upload url test, url: {url}, amount: {amount}, speed: {speed}, monopoly: {monopoly}, eta: {eta_datetime}')
 
-    if monopoly_model.lock:
-        return make_response({'error': 'Monopoly test is currently running'}, 400)
+    channel_uuid = str(uuid.uuid4())
 
-    monopoly_model.start_mode(monopoly)
+    kwargs = {
+        'url': url,
+        'channel_uuid': channel_uuid,
+        'speed': speed,
+        'monopoly': monopoly,
+        'amount': amount
+    }
+    if not eta_datetime:
+        upload_url_task.delay(
+            **kwargs
+        )
+    else:
+        upload_url_task.apply_async(
+            kwargs=kwargs, eta=eta_datetime
+        )
 
-    try:
-        channel_uuid = str(uuid.uuid4())
-
-        kwargs = {
-            'url': url,
-            'channel_uuid': channel_uuid,
-            'speed': speed,
-            'monopoly': monopoly,
-            'amount': amount
-        }
-        if not eta_datetime:
-            upload_url_task.delay(
-                **kwargs
-            )
-        else:
-            upload_url_task.apply_async(
-                kwargs=kwargs, eta=eta_datetime
-            )
-
-        main_host_url = current_app.config['MAIN_HOST_URL']
-        if current_app.config['DEBUG']:
-            return {'sse_stream_url': f'/stream?channel={channel_uuid}', 'uuid': channel_uuid}
-        else:
-            return {'sse_stream_url': f'{main_host_url}/stream?channel={channel_uuid}', 'uuid': channel_uuid}
-    except Exception as e:
-        monopoly_model.end_mode(monopoly)
-        raise e
+    main_host_url = current_app.config['MAIN_HOST_URL']
+    if current_app.config['DEBUG']:
+        return {'sse_stream_url': f'/stream?channel={channel_uuid}', 'uuid': channel_uuid}
+    else:
+        return {'sse_stream_url': f'{main_host_url}/stream?channel={channel_uuid}', 'uuid': channel_uuid}
 
 
 @bp.route(api_upload_tebi_endpoint, methods=['POST'])
