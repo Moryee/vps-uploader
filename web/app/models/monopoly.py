@@ -39,22 +39,27 @@ class MonopolyMode(db.Model):
         self.active_tests += increment
         db.session.commit()
 
-    def start_mode(self, monopoly_mode: bool):
+    def _can_start(self, monopoly_mode: bool):
+        if monopoly_mode:
+            return True if self.active_tests == 0 else False
+        else:
+            return False if self.lock else True
+
+    def start_mode(self, monopoly_mode: bool) -> bool:
         if monopoly_mode:
             self.update_lock(True)
 
-            for i in range(20):
-                db.session.refresh(self)
-                if self.active_tests == 0:
-                    break
-                current_app.logger.info(f'Waiting for active tests to finish. Active tests: {self.active_tests}')
-                time.sleep(10)
-            else:
-                if self.active_tests > 0:
-                    self.update_lock(False)
-                    raise Exception('Cannot start monopoly mode while there are active tests')
+            if not self._can_start(monopoly_mode):
+                self.update_lock(False)
+                return False
+            return True
         else:
             self.update_active_tests(1)
+
+            if not self._can_start(monopoly_mode):
+                self.update_active_tests(-1)
+                return False
+            return True
 
     def end_mode(self, monopoly_mode: bool):
         if monopoly_mode and self.lock:

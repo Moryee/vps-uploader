@@ -246,21 +246,42 @@ class UploadStatus:
 
 
 @shared_task(ignore_result=False)
-def upload_url_task(url, channel_uuid, speed, monopoly, amount):
+def upload_url_task(url, channel_uuid, speed, monopoly, amount, retries=0):
     asyncio.run(upload_url(
         url=url,
         channel_uuid=channel_uuid,
         speed=speed,
         monopoly=monopoly,
         amount=amount,
+        retries=retries,
     ))
 
 
-async def upload_url(url, channel_uuid, speed, monopoly, amount):
+async def upload_url(url, channel_uuid, speed, monopoly, amount, retries=0):
     monopoly_model: MonopolyMode = MonopolyMode.get()
-    try:
-        monopoly_model.start_mode(monopoly)
+    if not monopoly_model.start_mode(monopoly):
+        retries += 1
+        max_retries = 1
+        if retries == max_retries:
+            current_app.logger.info('Couldn\'t wait for task execution')
+            UploadStatus(channel_uuid).finished_with_exception('Couldn\'t wait for task execution. Max retries exceeded')
+            return
 
+        current_app.logger.info(f'Waiting for task execution {retries}/{max_retries}. monopoly: {monopoly}, url: {url}, amount: {amount}')
+
+        kwargs = {
+            'url': url,
+            'channel_uuid': channel_uuid,
+            'speed': speed,
+            'monopoly': monopoly,
+            'amount': amount,
+            'retries': retries,
+        }
+        upload_url_task.apply_async(
+            kwargs=kwargs, eta=datetime.datetime.utcnow() + datetime.timedelta(seconds=10)
+        )
+        return
+    try:
         start_time = time.monotonic()
 
         upload_status = UploadStatus(channel_uuid)
@@ -547,9 +568,6 @@ async def api_upload_url_test():
     # monopoly
 
     monopoly = request.json.get('monopoly', False)
-    monopoly_model: MonopolyMode = MonopolyMode.get()
-    if monopoly_model.lock:
-        return make_response({'error': 'Monopoly test is currently running'}, 400)
 
     # eta (estimated time of arrival)
 
