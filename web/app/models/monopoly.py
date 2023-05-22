@@ -41,18 +41,16 @@ class MonopolyMode(db.Model):
 
     def _can_start(self, monopoly_mode: bool):
         if monopoly_mode:
-            return True if self.active_tests == 0 else False
+            return True if self.active_tests == 0 and not self.lock else False
         else:
             return False if self.lock else True
 
     def start_mode(self, monopoly_mode: bool) -> bool:
         if monopoly_mode:
-            self.update_lock(True)
-
-            if not self._can_start(monopoly_mode):
-                self.update_lock(False)
-                return False
-            return True
+            if self._can_start(monopoly_mode):
+                self.update_lock(True)
+                return True
+            return False
         else:
             self.update_active_tests(1)
 
