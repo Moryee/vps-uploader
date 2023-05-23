@@ -38,7 +38,7 @@ class UploadStatus:
         {
             "file_size": float kb,
             "tebi_status": int,
-            "tebi_servers": "DE:1,USE:1,USW:2,SGP:1",
+            "tebi_servers": "DE:2,SGP:1,USE:2,USW:2",
             "ok": int,
             "failed": int,
             "finished": bool,
@@ -260,8 +260,11 @@ def upload_url_task(url, channel_uuid, speed, monopoly, amount, retries=0):
 async def upload_url(url, channel_uuid, speed, monopoly, amount, retries=0):
     monopoly_model: MonopolyMode = MonopolyMode.get()
     if not monopoly_model.start_mode(monopoly):
-        retries += 1
         max_retries = 20
+        wait_seconds = 10
+
+        retries += 1
+
         if retries == max_retries:
             current_app.logger.info('Couldn\'t wait for task execution')
             UploadStatus(channel_uuid).finished_with_exception('Couldn\'t wait for task execution. Max retries exceeded')
@@ -278,7 +281,7 @@ async def upload_url(url, channel_uuid, speed, monopoly, amount, retries=0):
             'retries': retries,
         }
         upload_url_task.apply_async(
-            kwargs=kwargs, eta=datetime.datetime.utcnow() + datetime.timedelta(seconds=10)
+            kwargs=kwargs, eta=datetime.datetime.utcnow() + datetime.timedelta(seconds=wait_seconds)
         )
         return
     try:
@@ -537,7 +540,7 @@ async def api_upload_url_test():
         "amount": int (default 1),
         "speed": int mb/s (default 100),
         "monopoly": bool (default false),
-        "eta": int (timestamp, utc, not required)
+        "eta": int (unix timestamp, utc, not required)
     }
     '''
     if not current_app.config['MAIN_HOST']:
@@ -573,16 +576,12 @@ async def api_upload_url_test():
 
     try:
         eta = int(request.json.get('eta', 0))
+        if eta:
+            eta_datetime = datetime.datetime.fromtimestamp(eta, tz=datetime.timezone.utc)
+        else:
+            eta_datetime = None
     except ValueError:
-        return make_response({'error': '\'eta\' must be integer'})
-
-    if eta:
-        eta_datetime = datetime.datetime.fromtimestamp(eta, tz=datetime.timezone.utc)
-    else:
-        eta_datetime = None
-
-    if eta < 1:
-        make_response({'error': '\'eta\' must be greater than 1'})
+        make_response({'error': 'Coudn\'t read \'eta\' value, make sure \'eta\' is unix timestamp'})
 
     current_app.logger.info(f'Upload url test, url: {url}, amount: {amount}, speed: {speed}, monopoly: {monopoly}, eta: {eta_datetime}')
 
