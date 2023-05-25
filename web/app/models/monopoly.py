@@ -1,6 +1,4 @@
 from app.extensions import db
-import time
-from flask import current_app
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import validates
 
@@ -36,8 +34,13 @@ class MonopolyMode(db.Model):
             raise e
 
     def update_active_tests(self, increment: int):
-        self.active_tests += increment
-        db.session.commit()
+        try:
+            db.session.begin_nested()
+            self.active_tests += increment
+            db.session.commit()
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            raise e
 
     def _can_start(self, monopoly_mode: bool):
         if monopoly_mode:

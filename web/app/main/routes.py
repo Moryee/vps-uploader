@@ -15,6 +15,7 @@ import uuid
 from celery import shared_task
 from app.extensions import db
 import datetime
+from sqlalchemy.exc import SQLAlchemyError
 
 
 CHUNK_SIZE = 1024 * 1024 * 1
@@ -270,7 +271,7 @@ async def upload_url(url, channel_uuid, speed, monopoly, amount, retries=0):
             UploadStatus(channel_uuid).finished_with_exception('Couldn\'t wait for task execution. Max retries exceeded')
             return
 
-        current_app.logger.info(f'Waiting for task execution {retries}/{max_retries}. monopoly: {monopoly}, url: {url}, amount: {amount}')
+        current_app.logger.info(f'Waiting for task execution {retries}/{max_retries}. Active tests: {monopoly_model.active_tests}, lock {monopoly_model.lock}. monopoly: {monopoly}, url: {url}, amount: {amount}')
 
         kwargs = {
             'url': url,
@@ -307,15 +308,21 @@ async def upload_url(url, channel_uuid, speed, monopoly, amount, retries=0):
 
         end_time = time.monotonic()
 
-        test = Test(
-            id=upload_status.uuid,
-            content=upload_status.get_status(),
-            url=url,
-            execution_time=round((end_time - start_time) * 1000, 3)
-        )
-        db.session.add(test)
-        db.session.commit()
+        try:
+            db.session.begin_nested()
+            test = Test(
+                id=upload_status.uuid,
+                content=upload_status.get_status(),
+                url=url,
+                execution_time=round((end_time - start_time) * 1000, 3)
+            )
+            db.session.add(test)
+            db.session.commit()
+        except SQLAlchemyError:
+            db.session.rollback()
+
     except Exception as e:
+        current_app.logger.error(e)
         raise e
     finally:
         monopoly_model.end_mode(monopoly)
