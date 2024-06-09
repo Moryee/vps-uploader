@@ -9,7 +9,9 @@ def get_ip_from_url(url):
         return ext.domain
 
     subdomain = ext.subdomain if ext.subdomain else 'www'
-    return socket.gethostbyname(subdomain + '.' + ext.domain + '.' + ext.suffix)
+    return socket.gethostbyname(
+        subdomain + '.' + ext.domain + '.' + ext.suffix
+    )
 
 
 def format_download_time(seconds: float):

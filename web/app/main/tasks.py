@@ -6,7 +6,14 @@ from datetime import datetime, timedelta, timezone
 import uuid
 
 
-@scheduler.task('cron', id='job_tests', hour='0,6,12,18', minute=0, misfire_grace_time=3600, timezone='Europe/Kiev')
+@scheduler.task(
+    'cron',
+    id='job_tests',
+    hour='0,6,12,18',
+    minute=0,
+    misfire_grace_time=3600,
+    timezone='Europe/Kiev'
+)
 def job_tests():
     with scheduler.app.app_context():
         current_app.logger.info('Starting job tests...')
@@ -25,7 +32,18 @@ def job_tests():
         )
 
 
-@scheduler.task('cron', id='job_clean_tests', day='*', hour=0, minute=0, misfire_grace_time=3600, timezone='Europe/Kiev')
+@scheduler.task(
+    'cron',
+    id='job_clean_tests',
+    day='*',
+    hour=0,
+    minute=0,
+    misfire_grace_time=3600,
+    timezone='Europe/Kiev'
+)
 def job_clean_tests():
     db.create_all()
-    Test.query.filter(Test.datetime < datetime.now(timezone('Europe/Kiev')) - timedelta(days=7)).delete()
+    Test.query.filter(
+        Test.datetime
+        < datetime.now(timezone('Europe/Kiev')) - timedelta(days=7)
+    ).delete()

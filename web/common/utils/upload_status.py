@@ -127,7 +127,8 @@ class UploadStatus:
         Args:
             `vps_ip` (str): ip address of vps
             `storage` (str): 'tebi' or 'object'
-            `status` (str): 0 - waiting, 1 - speed test started, 2 - speed test completed
+            `status` (str): 0 - waiting, 1 - speed test started, 2 - speed
+                test completed
 
         Raises:
             ValueError: _description_
@@ -145,7 +146,15 @@ class UploadStatus:
 
         self._make_announcement()
 
-    def vps_complete_status(self, vps_name: str, storage: str, latency: float, ttfb: float, time: float, ip: str):
+    def vps_complete_status(
+        self,
+        vps_name: str,
+        storage: str,
+        latency: float,
+        ttfb: float,
+        time: float,
+        ip: str
+    ):
         if storage not in ['tebi', 'object']:
             raise ValueError('storage must be either \'tebi\' or \'object\'')
 

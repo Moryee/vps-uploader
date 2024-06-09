@@ -20,15 +20,21 @@ async def upload_file_by_chunks(stream: ClientResponse, downloading_speed):
             total_bytes_downloaded += len(chunk)
 
             elapsed_time = time.monotonic() - start_time
-            expected_time = total_bytes_downloaded / (downloading_speed * 1024 * 1024)
+            expected_time = (
+                total_bytes_downloaded / (downloading_speed * 1024 * 1024)
+            )
             if elapsed_time < expected_time:
                 time.sleep(expected_time - elapsed_time)
         temp.seek(0)
         temp.close()
         os.unlink(temp.name)
 
-    actual_download_speed = total_bytes_downloaded / (1024 * 1024 * elapsed_time)
-    current_app.logger.info(f'downloading speed object: {actual_download_speed}mbps')
+    actual_download_speed = (
+        total_bytes_downloaded / (1024 * 1024 * elapsed_time)
+    )
+    current_app.logger.info(
+        f'downloading speed object: {actual_download_speed}mbps'
+    )
 
 
 def upload_file(file, downloading_speed):
@@ -44,7 +50,9 @@ def upload_file(file, downloading_speed):
             total_bytes_downloaded += len(chunk)
 
             elapsed_time = time.monotonic() - start_time
-            expected_time = total_bytes_downloaded / (downloading_speed * 1024 * 1024)
+            expected_time = (
+                total_bytes_downloaded / (downloading_speed * 1024 * 1024)
+            )
             if elapsed_time < expected_time:
                 time.sleep(expected_time - elapsed_time)
         temp.seek(0)

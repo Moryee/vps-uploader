@@ -33,7 +33,15 @@ class ReplicationService:
         pass
 
     @classmethod
-    async def upload_url(cls, url, channel_uuid, speed, monopoly, amount, retries=0):
+    async def upload_url(
+        cls,
+        url,
+        channel_uuid,
+        speed,
+        monopoly,
+        amount,
+        retries=0
+    ):
         monopoly_model: MonopolyMode = MonopolyMode.get()
         if not monopoly_model.start_mode(monopoly):
             max_retries = 20
@@ -43,10 +51,19 @@ class ReplicationService:
 
             if retries == max_retries:
                 current_app.logger.info('Couldn\'t wait for task execution')
-                UploadStatus(channel_uuid).finished_with_exception('Couldn\'t wait for task execution. Max retries exceeded')
+                UploadStatus(channel_uuid).finished_with_exception(
+                    'Couldn\'t wait for task execution. Max retries exceeded'
+                )
                 return
 
-            current_app.logger.info(f'Waiting for task execution {retries}/{max_retries}. Active tests: {monopoly_model.active_tests}, lock {monopoly_model.lock}. monopoly: {monopoly}, url: {url}, amount: {amount}')
+            current_app.logger.info(
+                f'Waiting for task execution {retries}/{max_retries}. '
+                + 'Active tests: {monopoly_model.active_tests}, '
+                + 'lock {monopoly_model.lock}. '
+                + 'monopoly: {monopoly}, '
+                + 'url: {url}, '
+                + 'amount: {amount}'
+            )
 
             kwargs = {
                 'url': url,
@@ -57,7 +74,10 @@ class ReplicationService:
                 'retries': retries,
             }
             upload_url_task.apply_async(
-                kwargs=kwargs, eta=datetime.datetime.utcnow() + datetime.timedelta(seconds=wait_seconds)
+                kwargs=kwargs,
+                eta=datetime.datetime.utcnow() + datetime.timedelta(
+                    seconds=wait_seconds
+                )
             )
             return
         try:
@@ -66,14 +86,33 @@ class ReplicationService:
             upload_status = UploadStatus(channel_uuid)
             upload_status.tebi_status = 0  # waiting
 
-            upload_object_task = asyncio.create_task(ReplicationService.publish_ordinary(api_upload_url_endpoint, {'url': url, 'speed': speed, 'amount': amount}, 'object', upload_status))
-            upload_distributed_task = asyncio.create_task(ReplicationService.publish_distributed(api_upload_file_endpoint, {'url': url, 'speed': speed, 'amount': amount}, 'tebi', upload_status))
+            upload_object_task = asyncio.create_task(
+                ReplicationService.publish_ordinary(
+                    api_upload_url_endpoint,
+                    {'url': url, 'speed': speed, 'amount': amount},
+                    'object',
+                    upload_status
+                )
+            )
+            upload_distributed_task = asyncio.create_task(
+                ReplicationService.publish_distributed(
+                    api_upload_file_endpoint,
+                    {'url': url, 'speed': speed, 'amount': amount},
+                    'tebi',
+                    upload_status
+                )
+            )
 
             try:
-                await asyncio.gather(upload_object_task, upload_distributed_task)
+                await asyncio.gather(
+                    upload_object_task,
+                    upload_distributed_task
+                )
             except Exception as e:
                 current_app.logger.error(e)
-                upload_status.finished_with_exception('error while uploading file to vps')
+                upload_status.finished_with_exception(
+                    'error while uploading file to vps'
+                )
 
             upload_status.finished()
             current_app.logger.info(f'finished {upload_status.get_status()}')
@@ -100,16 +139,32 @@ class ReplicationService:
             monopoly_model.end_mode(monopoly)
 
     @classmethod
-    async def publish_ordinary(cls, upload_endpoint, json_data, storage_type, upload_status: UploadStatus):
+    async def publish_ordinary(
+        cls,
+        upload_endpoint,
+        json_data,
+        storage_type,
+        upload_status: UploadStatus
+    ):
         vps_urls: dict = current_app.config['VPS_URLS'].copy()
 
-        async def make_post(session, vps_name, vps_url, endpoint, json, storage_type) -> tuple[ClientResponse, dict]:
+        async def make_post(
+            session,
+            vps_name,
+            vps_url,
+            endpoint,
+            json,
+            storage_type
+        ) -> tuple[ClientResponse, dict]:
             upload_status.vps_update_status(vps_name, storage_type, 1)
 
             resp: ClientResponse
             async with session.post(f'{vps_url}{endpoint}', json=json) as resp:
                 if not resp.ok:
-                    current_app.logger.error(f'Couldn\'t publish to host \'{vps_url}{endpoint}\'. Response: {resp.status} {resp.reason}')
+                    current_app.logger.error(
+                        f'Couldn\'t publish to host \'{vps_url}{endpoint}\'. '
+                        + 'Response: {resp.status} {resp.reason}'
+                    )
                     upload_status.vps_failed_status(vps_name, storage_type)
                     return
 
@@ -127,14 +182,27 @@ class ReplicationService:
         async with ClientSession() as session:
             for vps_name, vps_url in vps_urls.items():
                 try:
-                    await make_post(session, vps_name, vps_url, upload_endpoint, json_data, storage_type)
+                    await make_post(
+                        session,
+                        vps_name,
+                        vps_url,
+                        upload_endpoint,
+                        json_data,
+                        storage_type
+                    )
                 except Exception as e:
                     current_app.logger.error(e)
                     upload_status.vps_failed_status(vps_name, storage_type)
 
 
     @classmethod
-    async def publish_distributed(cls, upload_endpoint, json_data, storage_type, upload_status: UploadStatus):
+    async def publish_distributed(
+        cls,
+        upload_endpoint,
+        json_data,
+        storage_type,
+        upload_status: UploadStatus
+    ):
         vps_urls: dict = current_app.config['VPS_URLS'].copy()
 
         url = json_data['url']
@@ -142,8 +210,14 @@ class ReplicationService:
         async with ClientSession() as session:
             async with session.get(url) as resp:
                 if not resp.ok:
-                    current_app.logger.error(f'Couldn\'t get file from \'{url}\'. Response: {resp}')
-                    return {'error': f'Couldn\'t get file from \'{url}\'.'}, 400
+                    current_app.logger.error(
+                        f'Couldn\'t get file from \'{url}\'. '
+                        + 'Response: {resp}'
+                    )
+                    return (
+                        {'error': f'Couldn\'t get file from \'{url}\'.'},
+                        400
+                    )
 
                 downloaded_size = 0
                 name = ''
@@ -158,7 +232,11 @@ class ReplicationService:
                     for vps_name, vps_url in vps_urls.items():
                         temp.seek(0)
                         try:
-                            upload_status.vps_update_status(vps_name, storage_type, 1)
+                            upload_status.vps_update_status(
+                                vps_name,
+                                storage_type,
+                                1
+                            )
 
                             time = 0
                             ttfb = 0
@@ -171,10 +249,18 @@ class ReplicationService:
                                 if not chunk:
                                     break
 
-                                async with session.post(f'{vps_url}{upload_endpoint}', data={'file': chunk}) as resp:
+                                async with session.post(
+                                    f'{vps_url}{upload_endpoint}',
+                                    data={'file': chunk}
+                                ) as resp:
                                     if not resp.ok:
-                                        current_app.logger.error(f'Couldn\'t publish to host \'{vps_url}{upload_endpoint}\'. Response: {resp.status} {resp.reason}')
-                                        upload_status.vps_failed_status(vps_name, storage_type)
+                                        current_app.logger.error(
+                                            f'Couldn\'t publish to host \'{vps_url}{upload_endpoint}\'. '
+                                            + 'Response: {resp.status} {resp.reason}')
+                                        upload_status.vps_failed_status(
+                                            vps_name,
+                                            storage_type
+                                        )
                                         return
                                     resp_dict: dict = await resp.json()
                                     time += float(resp_dict.get('time', 0))
@@ -191,7 +277,9 @@ class ReplicationService:
                             )
                         except Exception as e:
                             current_app.logger.error(e)
-                            upload_status.vps_failed_status(vps_name, storage_type)
+                            upload_status.vps_failed_status(
+                                vps_name, storage_type
+                            )
 
                     name = temp.name
                     temp.close()
