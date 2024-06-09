@@ -9,6 +9,7 @@ from flask_sse import sse
 from celery import Celery, Task
 from app.models.test import Test
 from sqlalchemy.exc import DataError
+from flask_migrate import Migrate
 
 
 def celery_init_app(app: Flask) -> Celery:
@@ -89,6 +90,7 @@ def create_app(config_class=Config):
     if app.config['MAIN_HOST']:
         # database
         db.init_app(app)
+        migrate = Migrate(app, db)
 
         # scheduler
         # scheduler.init_app(app)
