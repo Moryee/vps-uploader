@@ -24,3 +24,7 @@ ENV FLASK_ENV=development
 
 # Copy project
 COPY . .
+
+RUN adduser -S -D -u 1000 docker_user
+RUN chown -R 1000:1000 /usr/src/web
+USER docker_user
