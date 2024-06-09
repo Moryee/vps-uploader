@@ -1,6 +1,7 @@
 Flask[async]==2.3.2
 Flask-SQLAlchemy==3.0.3
 Flask-APScheduler==1.12.4
+Flask-Migrate==4.0.7
 psycopg2-binary==2.9.6
 aiohttp==3.8.4
 flask-cors==3.0.10
